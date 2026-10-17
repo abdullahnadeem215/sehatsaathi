@@ -16,21 +16,62 @@ class PairingService:
         """Normalizes pairing key: case-insensitive, removes dashes and spaces."""
         return raw_key.replace("-", "").replace(" ", "").upper().strip()
 
-    async def register_patient_device(self, display_name: str) -> Tuple[str, str]:
-        """FR-19: Creates a patient record and issues a long random device token."""
+    async def register_patient_device(
+        self,
+        display_name: str,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        age: Optional[int] = None,
+        emergency_contact_name: Optional[str] = None,
+        doctor_name: Optional[str] = None,
+        doctor_email: Optional[str] = None,
+        doctor_specialty: Optional[str] = None,
+        doctor_phone: Optional[str] = None,
+        seed_reminders: bool = False
+    ) -> Tuple[str, str]:
+        """FR-19: Creates an individual patient record with details and issues a long random device token."""
         patient_id = f"pat_{secrets.token_hex(6)}"
         device_token = secrets.token_urlsafe(32)
         device_token_hash = hash_token(device_token)
 
         conn = await get_db_connection()
         try:
+            now_iso = utc_now_iso()
             await conn.execute(
                 """
-                INSERT INTO patients (id, display_name, device_token_hash, preferred_script, created_at)
-                VALUES (?, ?, ?, 'en', ?)
+                INSERT INTO patients (
+                    id, display_name, device_token_hash, preferred_script,
+                    email, phone, age, emergency_contact_name,
+                    doctor_name, doctor_email, doctor_specialty, doctor_phone,
+                    created_at
+                )
+                VALUES (?, ?, ?, 'en', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (patient_id, display_name, device_token_hash, utc_now_iso())
+                (
+                    patient_id, display_name, device_token_hash,
+                    email, phone, age, emergency_contact_name,
+                    doctor_name, doctor_email, doctor_specialty, doctor_phone,
+                    now_iso
+                )
             )
+
+            # Seed standard initial discharge medication reminders if requested
+            if seed_reminders:
+                await conn.execute(
+                    """
+                    INSERT INTO reminders (patient_id, medicine_name, dose_text, timing_text, status, created_at)
+                    VALUES (?, 'Metformin', '500 mg', '8:00 AM after breakfast', 'active', ?)
+                    """,
+                    (patient_id, now_iso)
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO reminders (patient_id, medicine_name, dose_text, timing_text, status, created_at)
+                    VALUES (?, 'Amlodipine', '5 mg', '9:00 PM after dinner', 'active', ?)
+                    """,
+                    (patient_id, now_iso)
+                )
+
             await conn.commit()
             return patient_id, device_token
         finally:

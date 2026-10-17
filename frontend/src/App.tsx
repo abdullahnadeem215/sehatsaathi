@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Bell, Check, ChevronRight, CircleHelp, HeartPulse, Keyboard,
-  Mic, PhoneCall, Play, RotateCcw, Send, Settings, ShieldCheck, Sparkles,
+  Mic, PhoneCall, Play, RotateCcw, Send, Settings, ShieldCheck,
   Users, Volume2, VolumeX, X, Zap, AlertTriangle, Pill, Plus, Trash2,
   Calendar, CheckCircle2, Clock, Upload, Camera, FileText, Mail, User,
-  Stethoscope, AlertCircle, RefreshCw, Brain
+  Stethoscope, AlertCircle, RefreshCw, History, QrCode, ExternalLink, Copy
 } from 'lucide-react'
+import QRCode from 'qrcode'
+import jsQR from 'jsqr'
 
 import {
   API_BASE,
@@ -63,7 +65,7 @@ import {
   audioRecorder
 } from './utils/audio'
 
-type Screen = 'role' | 'home' | 'answer' | 'emergency' | 'caregiver'
+type Screen = 'signup' | 'role' | 'home' | 'answer' | 'emergency' | 'caregiver'
 type TextSize = 'normal' | 'large' | 'extra'
 
 const textSizes: Record<TextSize, string> = {
@@ -74,6 +76,8 @@ const textSizes: Record<TextSize, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>(() => {
+    const isRegistered = Boolean(localStorage.getItem('patient_registered') && getPatientToken())
+    if (!isRegistered) return 'signup'
     const savedRole = localStorage.getItem('user-role')
     if (savedRole === 'caregiver') return 'caregiver'
     if (savedRole === 'patient') return 'home'
@@ -82,7 +86,7 @@ export default function App() {
 
   const [textSize, setTextSize] = useState<TextSize>(() => (localStorage.getItem('text-size') as TextSize) || 'normal')
   const [highContrast, setHighContrast] = useState(false)
-  const [patientName, setPatientName] = useState(() => localStorage.getItem('patient_display_name') || 'Robert Jenkins')
+  const [patientName, setPatientName] = useState(() => localStorage.getItem('patient_display_name') || '')
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null)
 
   // Professional startup splash screen state
@@ -109,7 +113,7 @@ export default function App() {
   const [currentAnswer, setCurrentAnswer] = useState<TurnResponse | null>(null)
   const [holdingMessage, setHoldingMessage] = useState('')
   const [linkedCaregiversCount, setLinkedCaregiversCount] = useState(0)
-  const [nextMedicine, setNextMedicine] = useState<string>('Metformin 500 mg · 8:00 AM')
+  const [nextMedicine, setNextMedicine] = useState<string>('')
 
   // Caregiver Live Siren / Emergency state
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState<{ id: number; transcript: string; created_at: string } | null>(null)
@@ -120,6 +124,14 @@ export default function App() {
     localStorage.setItem('text-size', textSize)
     document.documentElement.style.setProperty('--base-size', textSizes[textSize])
   }, [textSize])
+
+  // Strict Guard: Patient app cannot be accessed until signup is completed
+  useEffect(() => {
+    const isRegistered = Boolean(localStorage.getItem('patient_registered') && getPatientToken())
+    if (!isRegistered && screen !== 'signup' && screen !== 'caregiver') {
+      setScreen('signup')
+    }
+  }, [screen])
 
   // Periodic Due Reminders Checker
   const checkDueReminder = async () => {
@@ -152,23 +164,29 @@ export default function App() {
   // Initial Patient Setup & Splash Timer
   useEffect(() => {
     async function initPatient() {
-      const token = getPatientToken()
-      if (!token) {
-        try {
-          const reg = await registerPatient('Robert Jenkins')
-          setPatientName(reg.display_name)
-        } catch (e) {
-          console.warn('Auto-registration offline fallback:', e)
-        }
+      const isRegistered = Boolean(localStorage.getItem('patient_registered') && getPatientToken())
+      if (!isRegistered) {
+        setScreen('signup')
+        return
       }
+
       try {
         const prof = await getPatientProfile()
         if (prof) {
           setPatientProfile(prof)
           if (prof.display_name) setPatientName(prof.display_name)
+        } else {
+          throw new Error('No profile')
         }
       } catch (e) {
-        // fallback
+        // Reset stale tokens and keep user on signup
+        localStorage.removeItem('patient_registered')
+        localStorage.removeItem('patient_device_token')
+        localStorage.removeItem('patient_id')
+        localStorage.removeItem('patient_display_name')
+        localStorage.removeItem('patient_email')
+        setScreen('signup')
+        return
       }
       refreshPatientData()
       checkDueReminder()
@@ -192,6 +210,30 @@ export default function App() {
     }
   }, [])
 
+  const handleSignupSuccess = (profile: PatientProfile) => {
+    setPatientProfile(profile)
+    setPatientName(profile.display_name)
+    localStorage.setItem('user-role', 'patient')
+    setScreen('home')
+    refreshPatientData()
+    checkDueReminder()
+  }
+
+  const handleCaregiverJoin = () => {
+    localStorage.setItem('user-role', 'caregiver')
+    setScreen('caregiver')
+  }
+
+  const handleSwitchAccount = () => {
+    localStorage.removeItem('patient_registered')
+    localStorage.removeItem('patient_device_token')
+    localStorage.removeItem('patient_id')
+    localStorage.removeItem('patient_display_name')
+    localStorage.removeItem('patient_email')
+    setShowProfileModal(false)
+    setScreen('signup')
+  }
+
   // Refresh Patient Reminders, Linked count & Profile
   const refreshPatientData = async () => {
     try {
@@ -201,6 +243,8 @@ export default function App() {
       if (reminders && reminders.length > 0) {
         const rem = reminders[0]
         setNextMedicine(`${rem.medicine_name} ${rem.dose_text} · ${rem.timing_text}`)
+      } else {
+        setNextMedicine('')
       }
       const prof = await getPatientProfile()
       if (prof) {
@@ -314,6 +358,14 @@ export default function App() {
     <div className={`app ${highContrast ? 'high-contrast' : ''}`}>
       {/* 0. Professional Startup Splash Screen */}
       {loadingSplash && <SplashScreen />}
+
+      {/* 0b. Professional Startup Signup Screen */}
+      {screen === 'signup' && (
+        <SignupScreen
+          onSignupSuccess={handleSignupSuccess}
+          onCaregiverJoin={handleCaregiverJoin}
+        />
+      )}
 
       {/* 1. Role Selection Screen */}
       {screen === 'role' && <RoleScreen onChoose={chooseRole} />}
@@ -434,6 +486,7 @@ export default function App() {
       {showProfileModal && (
         <PatientProfileModal
           profile={patientProfile}
+          onSwitchAccount={handleSwitchAccount}
           onClose={() => {
             setShowProfileModal(false)
             refreshPatientData()
@@ -441,7 +494,7 @@ export default function App() {
         />
       )}
 
-      {/* AI Doctor Consultation & Email Approval Modal (Strict Consent) */}
+      {/* Doctor consultation and email approval modal (strict consent) */}
       {showDoctorModal && (
         <DoctorConsultModal
           patientProfile={patientProfile}
@@ -450,7 +503,7 @@ export default function App() {
         />
       )}
 
-      {/* Agent Conversation Memory & Context Awareness Modal */}
+      {/* Conversation history and medication context modal */}
       {showMemoryModal && (
         <MemoryModal
           onClose={() => setShowMemoryModal(false)}
@@ -466,9 +519,319 @@ export default function App() {
           highContrast={highContrast}
           setHighContrast={setHighContrast}
           currentScreen={screen}
+          showRoleSwitch={screen !== 'signup' && Boolean(localStorage.getItem('patient_registered') && getPatientToken())}
           onSwitchRole={() => setScreen(screen === 'caregiver' ? 'home' : 'caregiver')}
         />
       )}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Professional Startup Signup Screen (Onboarding)
+   Loads at startup for individual user, persists to SQLite DB
+------------------------------------------------------------- */
+function SignupScreen({
+  onSignupSuccess,
+  onCaregiverJoin,
+}: {
+  onSignupSuccess: (profile: PatientProfile) => void
+  onCaregiverJoin: () => void
+}) {
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [age, setAge] = useState('')
+  const [emergencyContact, setEmergencyContact] = useState('')
+
+  const [doctorName, setDoctorName] = useState('')
+  const [doctorEmail, setDoctorEmail] = useState('')
+  const [doctorSpecialty, setDoctorSpecialty] = useState('')
+  const [doctorPhone, setDoctorPhone] = useState('')
+
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!fullName.trim()) {
+      setErrorMsg('Please enter your full name.')
+      return
+    }
+
+    setIsSubmitting(true)
+    setErrorMsg(null)
+
+    try {
+      const res = await registerPatient({
+        display_name: fullName.trim(),
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        age: age.trim() ? parseInt(age.trim(), 10) : undefined,
+        emergency_contact_name: emergencyContact.trim() || undefined,
+        doctor_name: doctorName.trim() || undefined,
+        doctor_email: doctorEmail.trim() || undefined,
+        doctor_specialty: doctorSpecialty.trim() || undefined,
+        doctor_phone: doctorPhone.trim() || undefined,
+      })
+
+      let profile: PatientProfile
+      try {
+        profile = await getPatientProfile()
+      } catch {
+        profile = {
+          patient_id: res.patient_id,
+          display_name: res.display_name,
+          email: res.email || email.trim() || null,
+          phone: phone.trim() || null,
+          age: age.trim() ? parseInt(age.trim(), 10) : null,
+          emergency_contact_name: emergencyContact.trim() || null,
+          doctor_name: res.doctor_name || doctorName.trim() || null,
+          doctor_email: res.doctor_email || doctorEmail.trim() || null,
+          doctor_specialty: doctorSpecialty.trim() || null,
+          doctor_phone: doctorPhone.trim() || null,
+          created_at: new Date().toISOString(),
+        }
+      }
+
+      speakText(`Welcome to Sehat Saathi, ${res.display_name}. Your profile is ready.`)
+      onSignupSuccess(profile)
+    } catch (err: any) {
+      console.error('Registration failed:', err)
+      setErrorMsg('Unable to save user profile. Please check your connection and try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="signup-page-wrapper">
+      <main className="signup-card" role="main" aria-label="Sehat Saathi Patient Registration">
+        {/* Header with App Branding */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              background: 'var(--mint)',
+              color: 'var(--green-dark)',
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <HeartPulse size={30} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <h1 style={{ fontSize: '1.45rem', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>
+                Sehat Saathi
+              </h1>
+              <span className="signup-badge">Patient Registration</span>
+            </div>
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              Your gentle voice health companion
+            </p>
+          </div>
+        </div>
+
+        <div style={{ background: '#f8fafc', padding: '14px 16px', borderRadius: 14, border: '1px solid var(--line)', marginBottom: 20 }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--ink)', lineHeight: 1.45 }}>
+            👋 <strong>Welcome!</strong> Please enter your details below to activate your individual profile and connect your medical care companion.
+          </p>
+        </div>
+
+        {errorMsg && (
+          <div
+            role="alert"
+            style={{
+              padding: '10px 14px',
+              borderRadius: 12,
+              background: '#fee2e2',
+              color: '#991b1b',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 16,
+            }}
+          >
+            <AlertCircle size={18} />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} noValidate={false}>
+          {/* Section 1: Patient Details */}
+          <div className="form-section-title">
+            <User size={18} />
+            <span>1. Patient Profile Details</span>
+          </div>
+
+          <div className="profile-form-grid">
+            <div className="form-field-group">
+              <label htmlFor="signup-name">
+                Full Name <span style={{ color: '#dc2626' }}>*</span>
+              </label>
+              <input
+                id="signup-name"
+                required
+                type="text"
+                placeholder="Enter patient full name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-email">Personal Gmail / Email</label>
+              <input
+                id="signup-email"
+                type="email"
+                placeholder="your.email@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-phone">Phone Number</label>
+              <input
+                id="signup-phone"
+                type="tel"
+                placeholder="e.g. +1 (555) 000-0000"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-age">Age</label>
+              <input
+                id="signup-age"
+                type="number"
+                min={1}
+                max={120}
+                placeholder="e.g. 68"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group" style={{ gridColumn: 'span 2' }}>
+              <label htmlFor="signup-emergency">Emergency Family Contact</label>
+              <input
+                id="signup-emergency"
+                type="text"
+                placeholder="e.g. Contact name, relationship, phone number"
+                value={emergencyContact}
+                onChange={(e) => setEmergencyContact(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Section 2: Primary Doctor Details */}
+          <div className="form-section-title" style={{ marginTop: 22 }}>
+            <Stethoscope size={18} />
+            <span>2. Primary Doctor & Clinic (For Email Summaries)</span>
+          </div>
+
+          <div className="profile-form-grid">
+            <div className="form-field-group">
+              <label htmlFor="signup-doc-name">Doctor's Name</label>
+              <input
+                id="signup-doc-name"
+                type="text"
+                placeholder="Doctor's full name"
+                value={doctorName}
+                onChange={(e) => setDoctorName(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-doc-email">Doctor's Gmail Address</label>
+              <input
+                id="signup-doc-email"
+                type="email"
+                placeholder="doctor@gmail.com"
+                value={doctorEmail}
+                onChange={(e) => setDoctorEmail(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-doc-spec">Specialty</label>
+              <input
+                id="signup-doc-spec"
+                type="text"
+                placeholder="e.g. Family Medicine, Geriatrics"
+                value={doctorSpecialty}
+                onChange={(e) => setDoctorSpecialty(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field-group">
+              <label htmlFor="signup-doc-phone">Clinic Phone</label>
+              <input
+                id="signup-doc-phone"
+                type="tel"
+                placeholder="e.g. +1 (555) 000-0000"
+                value={doctorPhone}
+                onChange={(e) => setDoctorPhone(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <div style={{ marginTop: 24 }}>
+            <button
+              type="submit"
+              className="signup-submit-btn"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="spin" size={20} />
+                  <span>Setting Up Your Account...</span>
+                </>
+              ) : (
+                <>
+                  <span>Complete Setup & Start Sehat Saathi</span>
+                  <ChevronRight size={20} />
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+
+        {/* Alternate Navigation for Family Member / Caregiver */}
+        <div style={{ marginTop: 20, textAlign: 'center', borderTop: '1px solid var(--line)', paddingTop: 16 }}>
+          <p className="muted" style={{ margin: '0 0 8px 0', fontSize: '0.88rem' }}>
+            Are you a family member or caregiver setting up remote monitoring?
+          </p>
+          <button
+            type="button"
+            onClick={onCaregiverJoin}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--blue)',
+              fontWeight: 700,
+              fontSize: '0.92rem',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              textDecoration: 'underline',
+            }}
+          >
+            <Users size={16} />
+            <span>Switch to Caregiver Portal</span>
+          </button>
+        </div>
+      </main>
     </div>
   )
 }
@@ -497,7 +860,7 @@ function RoleScreen({ onChoose }: { onChoose: (role: 'patient' | 'caregiver') =>
           <span className="role-icon"><HeartPulse size={30} /></span>
           <span>
             <strong>I am the Patient</strong>
-            <small>Speak directly with your health assistant</small>
+            <small>Speak about your medicines and care needs</small>
           </span>
           <ChevronRight size={24} />
         </button>
@@ -599,9 +962,9 @@ function HomeScreen({
           <span>Sehat Saathi</span>
         </div>
         <div className="header-actions">
-          <button className="icon-button" onClick={onMemoryClick} aria-label="Agent Conversation Memory & Recall">
-            <Brain size={20} color="var(--green)" />
-            <span>Memory</span>
+          <button className="icon-button" onClick={onMemoryClick} aria-label="Conversation history">
+            <History size={20} color="var(--green)" />
+            <span>History</span>
           </button>
           <button className="icon-button" onClick={onPrescriptionsClick} aria-label="Prescriptions and scan">
             <Pill size={20} />
@@ -630,9 +993,9 @@ function HomeScreen({
       <section className="home-heading">
         <div className="status-pill">
           <span className="status-dot-inner" />
-          <span>Assistant Online · English</span>
+          <span>Care plan ready · English</span>
         </div>
-        <h1 style={{ marginTop: 12 }}>Good morning, {patientName}</h1>
+        <h1 style={{ marginTop: 12 }}>Good day, {patientName || 'Friend'}</h1>
         <p className="muted">What can I help you with today?</p>
       </section>
 
@@ -730,7 +1093,7 @@ function HomeScreen({
         </div>
         <div style={{ flex: 1 }}>
           <strong>Today at a glance</strong>
-          <p>{nextMedicine}</p>
+          <p>{nextMedicine || 'No medications scheduled yet · Tap to add prescriptions'}</p>
         </div>
         <ChevronRight size={22} color="var(--muted)" />
       </section>
@@ -744,8 +1107,8 @@ function HomeScreen({
           </div>
         ) : turnState === 'thinking' ? (
           <div className="state-badge thinking">
-            <Sparkles size={18} />
-            <span>{holdingMessage || 'I am thinking...'}</span>
+            <Clock size={18} />
+            <span>{holdingMessage || 'Preparing your information...'}</span>
           </div>
         ) : null}
 
@@ -803,7 +1166,7 @@ function HomeScreen({
           <span style={{ fontWeight: 700, color: '#166534' }}>"I've took this 1 hour till now"</span>
         </button>
         <button onClick={() => onSubmitQuery("Did I take my medicine?")} style={{ borderColor: '#93c5fd', background: '#eff6ff' }}>
-          <Brain size={18} color="#2563eb" />
+          <History size={18} color="#2563eb" />
           <span style={{ fontWeight: 700, color: '#1e40af' }}>"Did I take my medicine?"</span>
         </button>
         <button onClick={() => onSubmitQuery('When should I take Metformin?')}>
@@ -811,16 +1174,12 @@ function HomeScreen({
           <span>When to take Metformin?</span>
         </button>
         <button onClick={() => onSubmitQuery('Can I take a warm shower after surgery?')}>
-          <Sparkles size={18} color="var(--green)" />
+          <Calendar size={18} color="var(--green)" />
           <span>Can I take a warm shower?</span>
         </button>
         <button onClick={() => onSubmitQuery('What food can I eat today?')}>
-          <Sparkles size={18} color="var(--green)" />
+          <CheckCircle2 size={18} color="var(--green)" />
           <span>What foods can I eat?</span>
-        </button>
-        <button onClick={() => onSubmitQuery('I have the pain in my heart so hard')} style={{ borderColor: '#fca5a5' }}>
-          <AlertTriangle size={18} color="var(--crimson)" />
-          <span style={{ color: 'var(--crimson)', fontWeight: 700 }}>Test: Severe heart pain alert</span>
         </button>
       </div>
 
@@ -1067,12 +1426,12 @@ function ConfirmModal({
         {emailDraft ? (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span className="email-status-badge draft">Agent Decision: Draft Doctor Email</span>
+              <span className="email-status-badge draft">Review required: draft doctor email</span>
               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Strict Explicit Consent</span>
             </div>
             <h2 style={{ fontSize: '1.4rem', marginBottom: 6 }}>Review Email for Dr. {emailDraft.doctor_name}</h2>
             <p className="muted" style={{ marginBottom: 14 }}>
-              The assistant drafted this clinical message with your medical history and current issue. It will <strong>never</strong> be sent without your approval.
+              This clinical message is ready for your review. It will <strong>never</strong> be sent without your approval.
             </p>
 
             <div style={{ background: '#f8fafc', border: '1px solid var(--line)', borderRadius: 12, padding: 14, marginBottom: 16, textAlign: 'left' }}>
@@ -1128,6 +1487,7 @@ function ConfirmModal({
 ------------------------------------------------------------- */
 function FamilyPairingModal({ onClose }: { onClose: () => void }) {
   const [keyData, setKeyData] = useState<{ raw: string; formatted: string; expiresAt: string } | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string>('')
   const [secondsLeft, setSecondsLeft] = useState(600)
   const [pendingRequests, setPendingRequests] = useState<PairPendingItem[]>([])
   const [linkedCaregivers, setLinkedCaregivers] = useState<CaregiverLinkItem[]>([])
@@ -1146,6 +1506,24 @@ function FamilyPairingModal({ onClose }: { onClose: () => void }) {
       setIsLoading(false)
     }
   }
+
+  // Generate QR code data URL whenever pairing key changes
+  useEffect(() => {
+    if (keyData?.formatted) {
+      QRCode.toDataURL(`sehat-pair:${keyData.formatted}`, {
+        width: 240,
+        margin: 2,
+        color: {
+          dark: '#14532d',
+          light: '#ffffff',
+        },
+      })
+        .then(setQrDataUrl)
+        .catch((err) => {
+          console.error('Error generating pairing QR code:', err)
+        })
+    }
+  }, [keyData])
 
   // Load active links
   const loadLinks = async () => {
@@ -1236,8 +1614,25 @@ function FamilyPairingModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {/* Pairing QR Code (UX-41) */}
+        <div className="qr-display-box">
+          {qrDataUrl ? (
+            <img src={qrDataUrl} alt="Pairing QR Code" className="qr-image" />
+          ) : (
+            <div style={{ width: 190, height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <QrCode size={52} color="var(--green)" />
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, color: 'var(--green-dark)', fontWeight: 700, fontSize: '0.88rem' }}>
+            <Camera size={16} />
+            <span>Scan with Caregiver camera to link instantly</span>
+          </div>
+        </div>
+
         {/* Pairing Key (UX-41) */}
-        <p className="muted">Have your family member open the app and enter this 8-character code:</p>
+        <p className="muted" style={{ textAlign: 'center', fontSize: '0.85rem', margin: '4px 0 10px 0' }}>
+          Or enter this 8-character code manually:
+        </p>
 
         {keyData && (
           <div className="key-display">
@@ -1291,7 +1686,7 @@ function FamilyPairingModal({ onClose }: { onClose: () => void }) {
 /* -------------------------------------------------------------
 /* -------------------------------------------------------------
    Prescription Management Modal (Shared: Patient & Caregiver)
-   Enhanced with AI OCR Prescription Image Extraction & Missing Timing Warning
+   Prescription image extraction and missing timing warning
 ------------------------------------------------------------- */
 function PrescriptionsModal({
   role,
@@ -1373,7 +1768,7 @@ function PrescriptionsModal({
     }
   }
 
-  // Run AI OCR on uploaded image
+  // Extract prescription details from the uploaded image
   const handleRunOcr = async () => {
     if (!selectedFile) return
     setIsScanning(true)
@@ -1496,7 +1891,7 @@ function PrescriptionsModal({
         {activeTab === 'list' && (
           <div>
             <p className="muted" style={{ marginBottom: 16 }}>
-              Medications are automatically tracked with reminders and available to the AI assistant.
+              Medications are tracked with reminders so you can review them at any time.
             </p>
 
             {/* Prescription List */}
@@ -1615,11 +2010,11 @@ function PrescriptionsModal({
           </div>
         )}
 
-        {/* Tab 2: AI OCR Prescription Image Scan */}
+        {/* Tab 2: Prescription Image Scan */}
         {activeTab === 'scan' && (
           <div>
             <p className="muted" style={{ marginBottom: 14 }}>
-              Upload or snap a photo of your doctor's prescription. AI will extract medications and identify any missing timing instructions.
+              Upload or snap a photo of your doctor's prescription. We will identify medicines and highlight missing timing instructions for your review.
             </p>
 
             <input
@@ -1649,7 +2044,7 @@ function PrescriptionsModal({
                     <div className="ocr-scanning-overlay">
                       <div className="ocr-scanning-line" />
                       <RefreshCw size={28} className="spin-slow" />
-                      <strong>Scanning prescription with AI OCR...</strong>
+                      <strong>Reading prescription...</strong>
                       <span style={{ fontSize: '0.8rem', opacity: 0.9 }}>Detecting medicines, dosage, and missing timing</span>
                     </div>
                   )}
@@ -1662,7 +2057,7 @@ function PrescriptionsModal({
                     onClick={handleRunOcr}
                     disabled={isScanning}
                   >
-                    <Sparkles size={18} />
+                    <FileText size={18} />
                     <span>{isScanning ? 'Extracting Medications...' : 'Extract Medications with OCR'}</span>
                   </button>
                   <button
@@ -1812,8 +2207,8 @@ function PrescriptionsModal({
 }
 
 /* -------------------------------------------------------------
-   AI Doctor Consultation & Email Approval Modal
-   Strict Requirement: Agent NEVER sends email automatically!
+   Doctor Consultation & Email Approval Modal
+   Strict Requirement: Email is never sent automatically.
    Always drafts clinical email, displays preview, and requires user consent.
 ------------------------------------------------------------- */
 function DoctorConsultModal({
@@ -1829,13 +2224,14 @@ function DoctorConsultModal({
   const [healthIssue, setHealthIssue] = useState('')
   const [isDrafting, setIsDrafting] = useState(false)
   const [activeDraft, setActiveDraft] = useState<DoctorEmailItem | null>(null)
+  const [dispatchedEmail, setDispatchedEmail] = useState<DoctorEmailItem | null>(null)
   const [isApproving, setIsApproving] = useState(false)
   const [history, setHistory] = useState<DoctorEmailItem[]>([])
   const [actionNotice, setActionNotice] = useState<string | null>(null)
 
-  const doctorName = patientProfile?.doctor_name || 'Dr. Mitchell'
-  const doctorEmail = patientProfile?.doctor_email || 'dr.mitchell@clinic.com'
-  const patientEmail = patientProfile?.email || 'patient@gmail.com'
+  const doctorName = patientProfile?.doctor_name || 'Primary Care Doctor'
+  const doctorEmail = patientProfile?.doctor_email || ''
+  const patientEmail = patientProfile?.email || ''
 
   const loadHistory = async () => {
     try {
@@ -1877,10 +2273,32 @@ function DoctorConsultModal({
     setIsApproving(true)
     try {
       const res = await approveDoctorEmail(activeDraft.id)
+      const approvedItem = res.email_item || activeDraft
+      const docEmail = approvedItem.doctor_email || doctorEmail
+      const subj = approvedItem.subject
+      const body = approvedItem.body
+
+      // Prepare standard runtime Gmail Web compose & native Mail URL
+      const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(docEmail)}&su=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`
+      const mailtoUrl = `mailto:${encodeURIComponent(docEmail)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`
+
+      // Universal runtime dispatch for mobile and desktop
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      if (isMobile) {
+        // Native deep link launches Gmail app or mobile email client directly from patient's account
+        window.location.href = mailtoUrl
+      } else {
+        const opened = window.open(gmailUrl, '_blank')
+        if (!opened) {
+          window.location.href = mailtoUrl
+        }
+      }
+
+      setDispatchedEmail(approvedItem)
       setActiveDraft(null)
       setHealthIssue('')
-      setActionNotice(`✓ Success: Clinical email approved and dispatched to Dr. ${res.email_item.doctor_name} (${res.email_item.doctor_email}).`)
-      speakText(`Clinical email approved and dispatched to Dr. ${res.email_item.doctor_name}.`)
+      setActionNotice(`✓ Clinical email approved! Dispatched to Dr. ${approvedItem.doctor_name} (${docEmail}).`)
+      speakText(`Clinical email approved and dispatched to Dr. ${approvedItem.doctor_name}.`)
       loadHistory()
     } catch (err: any) {
       alert('Failed to dispatch email. Please check doctor email settings.')
@@ -1950,13 +2368,65 @@ function DoctorConsultModal({
               </div>
             )}
 
+            {dispatchedEmail && (
+              <div className="email-dispatched-card">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#166534', fontWeight: 700, fontSize: '1.05rem', marginBottom: 6 }}>
+                  <CheckCircle2 size={24} color="#16a34a" />
+                  <span>Clinical Email Dispatched</span>
+                </div>
+                <p style={{ color: '#15803d', fontSize: '0.88rem', lineHeight: 1.45, marginBottom: 14 }}>
+                  Your inquiry to <strong>Dr. {dispatchedEmail.doctor_name}</strong> ({dispatchedEmail.doctor_email}) has been authorized and opened in your email client. You can re-open or send it anytime using the options below:
+                </p>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <a
+                    href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(dispatchedEmail.doctor_email)}&su=${encodeURIComponent(dispatchedEmail.subject)}&body=${encodeURIComponent(dispatchedEmail.body)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="primary-button"
+                    style={{ flex: 1, minWidth: 160, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, textDecoration: 'none', background: '#ea4335' }}
+                  >
+                    <Mail size={18} />
+                    <span>Open in Gmail</span>
+                    <ExternalLink size={14} />
+                  </a>
+                  <a
+                    href={`mailto:${encodeURIComponent(dispatchedEmail.doctor_email)}?subject=${encodeURIComponent(dispatchedEmail.subject)}&body=${encodeURIComponent(dispatchedEmail.body)}`}
+                    className="secondary-button"
+                    style={{ flex: 1, minWidth: 160, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, textDecoration: 'none' }}
+                  >
+                    <Send size={18} />
+                    <span>Send via Mail App</span>
+                  </a>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(`To: ${dispatchedEmail.doctor_email}\nSubject: ${dispatchedEmail.subject}\n\n${dispatchedEmail.body}`)
+                      alert('Email text copied to clipboard!')
+                    }}
+                  >
+                    <Copy size={16} />
+                    <span>Copy Text</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDispatchedEmail(null)}
+                  style={{ marginTop: 12, background: 'transparent', color: '#15803d', fontWeight: 700, fontSize: '0.86rem', border: 'none', cursor: 'pointer', padding: 0 }}
+                >
+                  + Draft Another Email
+                </button>
+              </div>
+            )}
+
             {!activeDraft ? (
               <form onSubmit={handleDraftEmail}>
                 <label style={{ display: 'block', fontWeight: 700, fontSize: '0.88rem', marginBottom: 6 }}>
                   Describe Your Current Health Issue or Symptoms
                 </label>
                 <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 8 }}>
-                  e.g., “I have severe pain in my chest and feel dizzy”, or “My blood pressure is higher than usual today”. The AI will draft a natural, professional clinical memo with your active medication list.
+                  e.g., “I have severe pain in my chest and feel dizzy”, or “My blood pressure is higher than usual today”. Your information will be used to prepare a professional clinical memo with your active medication list.
                 </p>
 
                 <textarea
@@ -1975,7 +2445,7 @@ function DoctorConsultModal({
                     style={{ flex: 1 }}
                     disabled={isDrafting}
                   >
-                    <Sparkles size={18} />
+                    <FileText size={18} />
                     <span>{isDrafting ? 'Drafting Clinical Email...' : 'Draft Clinical Email for Doctor'}</span>
                   </button>
                 </div>
@@ -1988,7 +2458,7 @@ function DoctorConsultModal({
                   <ShieldCheck size={20} style={{ flexShrink: 0 }} />
                   <div>
                     <strong>Approval Required Before Sending</strong>
-                    <div>The AI Agent will NEVER send this email automatically. Please review the details below and tap Approve when you are ready.</div>
+                    <div>This email will never be sent automatically. Review the details below and tap Approve when you are ready.</div>
                   </div>
                 </div>
 
@@ -2039,33 +2509,85 @@ function DoctorConsultModal({
 
         {/* Tab 2: Communications History */}
         {activeTab === 'history' && (
-          <div>
+          <div className="history-tab-pane">
             <p className="muted" style={{ marginBottom: 14 }}>
               Record of all clinical emails drafted, approved, and sent to your doctor.
             </p>
 
             {history.length === 0 ? (
-              <p className="muted" style={{ fontStyle: 'italic', textAlign: 'center', padding: '24px 0' }}>
-                No doctor communications yet.
-              </p>
+              <div className="history-empty-state">
+                <Mail size={36} className="history-empty-icon" />
+                <p>No doctor communications yet.</p>
+                <small>Draft an email about your health symptoms to see it recorded here.</small>
+              </div>
             ) : (
-              <div style={{ display: 'grid', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+              <div className="history-list-container">
                 {history.map((item) => (
-                  <div key={item.id} style={{ background: '#ffffff', border: '1px solid var(--line)', borderRadius: 12, padding: 14 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                      <div>
-                        <strong style={{ fontSize: '0.95rem' }}>{item.subject}</strong>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                          To: {item.doctor_name} ({item.doctor_email}) · {new Date(item.created_at).toLocaleDateString()} {new Date(item.created_at).toLocaleTimeString()}
-                        </p>
+                  <div key={item.id} className="history-item-card">
+                    <div className="history-item-header">
+                      <div className="history-item-title-col">
+                        <strong className="history-item-subject">{item.subject}</strong>
+                        <div className="history-item-meta">
+                          <span className="history-doctor-label">To: {item.doctor_name}</span>
+                          <span className="history-divider">•</span>
+                          <span className="history-email-text">{item.doctor_email}</span>
+                          <span className="history-divider">•</span>
+                          <span className="history-date-text">
+                            {new Date(item.created_at).toLocaleDateString()} {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
                       </div>
                       <span className={`email-status-badge ${item.status}`}>
                         {item.status.toUpperCase()}
                       </span>
                     </div>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--ink)', lineBreak: 'anywhere' }}>
-                      <strong>Issue:</strong> {item.health_issue}
-                    </p>
+
+                    <div className="history-item-body">
+                      <div className="history-field-row">
+                        <span className="history-field-label">Health Issue:</span>
+                        <span className="history-field-value">{item.health_issue}</span>
+                      </div>
+                      {item.prescriptions_summary && (
+                        <div className="history-field-row" style={{ marginTop: 4 }}>
+                          <span className="history-field-label">Medications Summary:</span>
+                          <span className="history-field-value muted">{item.prescriptions_summary}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="history-item-actions">
+                      <a
+                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(item.doctor_email)}&su=${encodeURIComponent(item.subject)}&body=${encodeURIComponent(item.body)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="icon-button"
+                        style={{ textDecoration: 'none', fontSize: '0.8rem', padding: '6px 12px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}
+                      >
+                        <Mail size={14} />
+                        <span>Send / Open in Gmail</span>
+                        <ExternalLink size={12} />
+                      </a>
+                      <a
+                        href={`mailto:${encodeURIComponent(item.doctor_email)}?subject=${encodeURIComponent(item.subject)}&body=${encodeURIComponent(item.body)}`}
+                        className="icon-button"
+                        style={{ textDecoration: 'none', fontSize: '0.8rem', padding: '6px 12px' }}
+                      >
+                        <Send size={14} />
+                        <span>Mail App</span>
+                      </a>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(`To: ${item.doctor_email}\nSubject: ${item.subject}\n\n${item.body}`)
+                          alert('Email text copied to clipboard!')
+                        }}
+                      >
+                        <Copy size={14} />
+                        <span>Copy</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2083,16 +2605,21 @@ function DoctorConsultModal({
 ------------------------------------------------------------- */
 function PatientProfileModal({
   profile,
+  onSwitchAccount,
   onClose,
 }: {
   profile: PatientProfile | null
+  onSwitchAccount?: () => void
   onClose: () => void
 }) {
-  const [displayName, setDisplayName] = useState(profile?.display_name || 'Robert Jenkins')
+  const [displayName, setDisplayName] = useState(profile?.display_name || '')
   const [email, setEmail] = useState(profile?.email || '')
-  const [doctorName, setDoctorName] = useState(profile?.doctor_name || 'Dr. Sarah Mitchell')
-  const [doctorEmail, setDoctorEmail] = useState(profile?.doctor_email || 'dr.mitchell@clinic.com')
-  const [doctorSpecialty, setDoctorSpecialty] = useState(profile?.doctor_specialty || 'General Practitioner')
+  const [phone, setPhone] = useState(profile?.phone || '')
+  const [age, setAge] = useState(profile?.age ? String(profile.age) : '')
+  const [emergencyContact, setEmergencyContact] = useState(profile?.emergency_contact_name || '')
+  const [doctorName, setDoctorName] = useState(profile?.doctor_name || '')
+  const [doctorEmail, setDoctorEmail] = useState(profile?.doctor_email || '')
+  const [doctorSpecialty, setDoctorSpecialty] = useState(profile?.doctor_specialty || '')
   const [doctorPhone, setDoctorPhone] = useState(profile?.doctor_phone || '')
   const [isSaving, setIsSaving] = useState(false)
   const [savedSuccess, setSavedSuccess] = useState(false)
@@ -2104,6 +2631,9 @@ function PatientProfileModal({
       await updatePatientProfile({
         display_name: displayName.trim(),
         email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        age: age.trim() ? parseInt(age.trim(), 10) : undefined,
+        emergency_contact_name: emergencyContact.trim() || undefined,
         doctor_name: doctorName.trim() || undefined,
         doctor_email: doctorEmail.trim() || undefined,
         doctor_specialty: doctorSpecialty.trim() || undefined,
@@ -2124,7 +2654,7 @@ function PatientProfileModal({
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: 560 }}>
+      <div className="modal-content" style={{ maxWidth: 580 }}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">ACCOUNT & CLINICAL DIRECTORY</p>
@@ -2136,7 +2666,7 @@ function PatientProfileModal({
         </div>
 
         <p className="muted" style={{ marginBottom: 14 }}>
-          Enter your personal email and your primary doctor's Gmail so the AI agent can draft clinical updates when you have symptoms.
+          Enter your personal email and your primary doctor's Gmail so you can prepare clinical updates when you have symptoms.
         </p>
 
         <form onSubmit={handleSave}>
@@ -2163,6 +2693,35 @@ function PatientProfileModal({
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="robert.jenkins@gmail.com"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Phone Number</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. +1 (555) 349-8201"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Age</label>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="e.g. 72"
+              />
+            </div>
+            <div className="form-field-group" style={{ gridColumn: 'span 2' }}>
+              <label>Emergency Family Contact</label>
+              <input
+                type="text"
+                value={emergencyContact}
+                onChange={(e) => setEmergencyContact(e.target.value)}
+                placeholder="e.g. Mary Jenkins (Daughter) - +1 (555) 349-8209"
               />
             </div>
           </div>
@@ -2255,6 +2814,48 @@ function PatientProfileModal({
               Cancel
             </button>
           </div>
+
+          {onSwitchAccount && (
+            <div
+              style={{
+                marginTop: 22,
+                paddingTop: 16,
+                borderTop: '1px solid var(--line)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 10,
+              }}
+            >
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '0.86rem', margin: 0, color: 'var(--ink)' }}>
+                  Switch Account or Register New User?
+                </p>
+                <small className="muted">Clears local device profile so you can register a new patient</small>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to sign out and register a new user profile?')) {
+                    onSwitchAccount()
+                  }
+                }}
+                style={{
+                  background: '#fff',
+                  color: '#dc2626',
+                  border: '1.5px solid #fca5a5',
+                  borderRadius: 10,
+                  padding: '7px 14px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Sign Out / Register New User
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>
@@ -2277,6 +2878,210 @@ function SplashScreen() {
       <div className="splash-subtitle">Your Gentle Health Companion</div>
       <div className="splash-progress-track">
         <div className="splash-progress-bar" />
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   QR Scanner Modal for Caregiver Pairing (Camera + Fallback)
+------------------------------------------------------------- */
+function QRScannerModal({
+  onScanSuccess,
+  onClose,
+}: {
+  onScanSuccess: (scannedText: string) => void
+  onClose: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(true)
+  const streamRef = useRef<MediaStream | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        })
+        if (!active) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+      } catch (err: any) {
+        console.warn('Camera error:', err)
+        setErrorMsg('Camera access is unavailable or was denied. You can still scan by uploading an image of the QR code below.')
+      }
+    }
+
+    startCamera()
+
+    return () => {
+      active = false
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+      }
+    }
+  }, [])
+
+  // Continuous frame analysis with jsQR
+  useEffect(() => {
+    let timer: any = null
+
+    const checkFrame = () => {
+      if (!isScanning) return
+      const video = videoRef.current
+      if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
+        let canvas = canvasRef.current
+        if (!canvas) {
+          canvas = document.createElement('canvas')
+          canvasRef.current = canvas
+        }
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const code = jsQR(imgData.data, imgData.width, imgData.height, {
+            inversionAttempts: 'dontInvert',
+          })
+          if (code && code.data) {
+            setIsScanning(false)
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach((t) => t.stop())
+            }
+            onScanSuccess(code.data)
+            return
+          }
+        }
+      }
+      timer = setTimeout(checkFrame, 200)
+    }
+
+    timer = setTimeout(checkFrame, 300)
+    return () => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [isScanning, onScanSuccess])
+
+  // Fallback: Pick or capture image file
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0)
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const code = jsQR(imgData.data, imgData.width, imgData.height)
+          if (code && code.data) {
+            onScanSuccess(code.data)
+          } else {
+            alert('Could not find a valid pairing QR code in this image. Please ensure the code is clear and well-lit.')
+          }
+        }
+      }
+      img.src = reader.result as string
+    }
+    reader.readAsDataURL(file)
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: 440, textAlign: 'center' }}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">CAREGIVER CAMERA SCANNER</p>
+            <h2>Scan Patient QR Code</h2>
+          </div>
+          <button className="close-btn" onClick={onClose} aria-label="Close scanner">
+            <X size={22} />
+          </button>
+        </div>
+
+        <p className="muted" style={{ fontSize: '0.88rem', margin: '4px 0 16px 0' }}>
+          Point your device camera at the QR code displayed on the patient’s phone screen.
+        </p>
+
+        {errorMsg ? (
+          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#991b1b', padding: 14, borderRadius: 12, marginBottom: 16, fontSize: '0.88rem' }}>
+            {errorMsg}
+          </div>
+        ) : (
+          <div style={{ position: 'relative', width: '100%', height: 260, borderRadius: 16, overflow: 'hidden', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <video
+              ref={videoRef}
+              playsInline
+              autoPlay
+              muted
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+            {/* Viewfinder Reticle */}
+            <div style={{
+              position: 'absolute',
+              width: 180,
+              height: 180,
+              border: '3px solid #22c55e',
+              borderRadius: 16,
+              boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 2,
+                background: '#4ade80',
+                boxShadow: '0 0 10px #22c55e',
+                animation: 'scannerLine 2s linear infinite'
+              }} />
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label className="icon-button" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 14px' }}>
+            <Upload size={18} />
+            <span>Upload QR Image Instead</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -2309,6 +3114,7 @@ function CaregiverScreen({
   const [token, setToken] = useState<string>(() => getCaregiverToken())
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [showRxModal, setShowRxModal] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
 
   // Pairing Entry State
   const [pairKey, setPairKey] = useState('')
@@ -2319,6 +3125,35 @@ function CaregiverScreen({
 
   // Clinician Note State
   const [clinicianNotes, setClinicianNotes] = useState<Record<number, string>>({})
+
+  // Handle scanned QR Code from camera or upload
+  const handleQrScanned = async (scannedCode: string) => {
+    setShowScanner(false)
+    let code = scannedCode.replace(/^sehat-pair:/i, '').trim().toUpperCase()
+    const match = code.match(/([A-Z0-9]{4})-?([A-Z0-9]{4})/)
+    if (match) {
+      code = `${match[1]}-${match[2]}`
+    }
+    setPairKey(code)
+    speakText('QR code scanned. Connecting to patient...')
+
+    const nameToUse = caregiverName.trim() || 'Family Caregiver'
+    if (!caregiverName.trim()) {
+      setCaregiverName('Family Caregiver')
+    }
+
+    setIsRedeeming(true)
+    setPairStatusMsg('Submitting scanned pairing key...')
+    try {
+      const res = await redeemPairingKey(code.trim(), nameToUse)
+      setPendingId(res.pending_id)
+      setPairStatusMsg('Waiting for patient to approve on their phone...')
+    } catch (err: any) {
+      setPairStatusMsg(err.message || 'Key is incorrect or expired.')
+    } finally {
+      setIsRedeeming(false)
+    }
+  }
 
   // Load Dashboard Data
   const loadDashboard = async () => {
@@ -2449,10 +3284,29 @@ function CaregiverScreen({
         </div>
         <h1>Connect with Patient</h1>
         <p className="muted" style={{ maxWidth: 460, marginTop: 10 }}>
-          Enter your name and the 8-character pairing code displayed on the patient’s screen.
+          Scan the QR code on the patient's phone screen or enter their 8-character pairing code.
         </p>
 
-        <form onSubmit={handleRedeemKey} style={{ width: '100%', maxWidth: 440, marginTop: 24, display: 'grid', gap: 14 }}>
+        {/* Quick QR Scanner Option */}
+        <div style={{ width: '100%', maxWidth: 440, marginTop: 20 }}>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setShowScanner(true)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'var(--green-dark)', padding: '14px 18px', borderRadius: 14 }}
+          >
+            <Camera size={22} />
+            <span>Scan Patient QR Code to Link</span>
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: 440, margin: '18px 0 6px 0', color: 'var(--muted)', fontSize: '0.82rem' }}>
+          <hr style={{ flex: 1, border: 'none', borderTop: '1.5px solid var(--line)' }} />
+          <span>OR ENTER CODE MANUALLY</span>
+          <hr style={{ flex: 1, border: 'none', borderTop: '1.5px solid var(--line)' }} />
+        </div>
+
+        <form onSubmit={handleRedeemKey} style={{ width: '100%', maxWidth: 440, marginTop: 10, display: 'grid', gap: 14 }}>
           <label style={{ textAlign: 'left', fontWeight: 700, fontSize: '0.85rem' }}>
             Your Name
             <input
@@ -2501,6 +3355,13 @@ function CaregiverScreen({
             Switch to Patient Mode
           </button>
         </form>
+
+        {showScanner && (
+          <QRScannerModal
+            onScanSuccess={handleQrScanned}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
       </main>
     )
   }
@@ -2530,6 +3391,10 @@ function CaregiverScreen({
               <span>Settings</span>
             </button>
           )}
+          <button className="icon-button" onClick={() => setShowScanner(true)} aria-label="Scan Patient QR Code">
+            <QrCode size={18} />
+            <span>Pair QR</span>
+          </button>
           <button className="icon-button" onClick={onSwitchToPatient} aria-label="Switch to Patient Mode">
             <HeartPulse size={18} />
             <span>Patient</span>
@@ -2723,12 +3588,19 @@ function CaregiverScreen({
           }}
         />
       )}
+
+      {showScanner && (
+        <QRScannerModal
+          onScanSuccess={handleQrScanned}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
     </main>
   )
 }
 
 /* -------------------------------------------------------------
-   Agent Conversation Memory & Awareness Modal
+   Conversation History & Medication Context Modal
 ------------------------------------------------------------- */
 function MemoryModal({
   onClose,
@@ -2743,7 +3615,7 @@ function MemoryModal({
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const data = await getPatientMemories(10)
+      const data = await getPatientMemories(15)
       setMemories(data)
       setLoading(false)
     }
@@ -2751,96 +3623,92 @@ function MemoryModal({
   }, [])
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Conversation and Medication History">
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ background: '#e0f2fe', color: '#0369a1', padding: 8, borderRadius: 12, display: 'flex' }}>
-              <Brain size={24} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ background: 'var(--mint)', color: 'var(--green-dark)', padding: 10, borderRadius: 12, display: 'grid', placeItems: 'center' }}>
+              <History size={24} />
             </span>
             <div>
-              <h3>Agent Memory & Awareness</h3>
-              <p className="muted" style={{ fontSize: '0.85rem' }}>
-                Context retained from prior conversations and medication intake
-              </p>
+              <p className="eyebrow" style={{ margin: 0 }}>CONTEXT & CARE MEMORY</p>
+              <h2 style={{ fontSize: '1.25rem', margin: 0 }}>Conversation & Care History</h2>
             </div>
           </div>
-          <button className="close-btn" onClick={onClose}><X size={20} /></button>
+          <button className="close-btn" onClick={onClose} aria-label="Close history modal">
+            <X size={20} />
+          </button>
         </div>
 
-        <div style={{ margin: '14px 0', padding: '12px 16px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#475569' }}>
-          💡 <strong>How Memory Works:</strong> Sehat Saathi remembers your questions, reported symptoms, and logged medication times. When you ask follow-ups like <em>"Did I take my medicine?"</em> or <em>"What did we discuss earlier?"</em>, the agent uses this persistent context.
+        <div className="history-explainer-banner">
+          <Clock size={18} style={{ flexShrink: 0, marginTop: 2, color: 'var(--green)' }} />
+          <span>
+            Sehat Saathi retains your past questions, symptom reports, and medicine confirmations so clinical recommendations stay coherent across conversations.
+          </span>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <strong style={{ fontSize: '0.9rem', color: '#1e293b' }}>Quick Memory Recall Tests:</strong>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+        {/* Quick query chips */}
+        <div style={{ margin: '14px 0 16px' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--ink)', display: 'block', marginBottom: 8 }}>
+            Quick memory checks:
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
-              onClick={() => { onClose(); onTestQuery('Did I take my medicine?'); }}
-              style={{ padding: '6px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, fontSize: '0.85rem', fontWeight: 600, color: '#166534', cursor: 'pointer' }}
+              type="button"
+              className="history-chip-btn"
+              onClick={() => { onClose(); onTestQuery('Did I take my medicine today?'); }}
             >
-              "Did I take my medicine?"
+              "Did I take my medicine today?"
             </button>
             <button
-              onClick={() => { onClose(); onTestQuery('What did we talk about?'); }}
-              style={{ padding: '6px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, fontSize: '0.85rem', fontWeight: 600, color: '#1e40af', cursor: 'pointer' }}
+              type="button"
+              className="history-chip-btn"
+              onClick={() => { onClose(); onTestQuery('What did the doctor say about my diet?'); }}
             >
-              "What did we talk about?"
+              "What did the doctor say about my diet?"
             </button>
           </div>
         </div>
 
-        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        {/* List of memory items */}
+        <div className="history-list-container">
           {loading ? (
-            <p className="muted" style={{ textAlign: 'center', padding: 20 }}>Loading agent memories...</p>
+            <div className="history-empty-state">
+              <RefreshCw className="spin" size={28} />
+              <p>Loading conversation memory...</p>
+            </div>
           ) : memories.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 30, color: '#64748b' }}>
-              <Brain size={36} style={{ margin: '0 auto 10px', opacity: 0.5 }} />
-              <p>No conversation memories recorded yet.</p>
-              <p style={{ fontSize: '0.8rem' }}>Ask a question or log a medication intake to start building memory!</p>
+            <div className="history-empty-state">
+              <History size={36} className="history-empty-icon" />
+              <p>No conversation history recorded yet.</p>
+              <small>Ask a health question or record medication intake to begin building your care memory timeline.</small>
             </div>
           ) : (
             memories.map((m, idx) => (
-              <div
-                key={m.id || idx}
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: 12,
-                  padding: 12,
-                  marginBottom: 10,
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    padding: '2px 8px',
-                    borderRadius: 6,
-                    background: m.intent === 'adherence' ? '#dcfce7' : m.intent === 'emergency' ? '#fee2e2' : '#f1f5f9',
-                    color: m.intent === 'adherence' ? '#15803d' : m.intent === 'emergency' ? '#b91c1c' : '#475569'
-                  }}>
-                    {m.intent}
+              <div key={m.id || idx} className="memory-history-card">
+                <div className="memory-card-header">
+                  <span className={`memory-intent-tag ${m.intent || 'general'}`}>
+                    {(m.intent || 'general').toUpperCase()}
                   </span>
-                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                    {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ''}
+                  <span className="memory-time-tag">
+                    {m.created_at ? new Date(m.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : ''}
                   </span>
                 </div>
-                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>
-                  👤 “{m.user_query}”
+                <div className="memory-user-query">
+                  <span className="memory-speaker-label">Patient:</span>
+                  <span className="memory-query-text">"{m.user_query}"</span>
                 </div>
-                <div style={{ fontSize: '0.85rem', color: '#334155', background: '#f8fafc', padding: 8, borderRadius: 8 }}>
-                  🤖 {m.assistant_response}
+                <div className="memory-assistant-response">
+                  <span className="memory-assistant-label">Sehat Saathi:</span>
+                  <span className="memory-response-text">{m.assistant_response}</span>
                 </div>
               </div>
             ))
           )}
         </div>
 
-        <div className="modal-actions" style={{ marginTop: 16 }}>
-          <button className="primary-btn" onClick={onClose} style={{ width: '100%' }}>
+        <div style={{ marginTop: 20 }}>
+          <button type="button" className="primary-button" onClick={onClose} style={{ minHeight: 48, fontSize: '0.95rem' }}>
             Done
           </button>
         </div>
@@ -2858,6 +3726,7 @@ function AccessibilityBar({
   highContrast,
   setHighContrast,
   currentScreen,
+  showRoleSwitch = true,
   onSwitchRole,
 }: {
   textSize: TextSize
@@ -2865,6 +3734,7 @@ function AccessibilityBar({
   highContrast: boolean
   setHighContrast: (v: boolean) => void
   currentScreen: Screen
+  showRoleSwitch?: boolean
   onSwitchRole: () => void
 }) {
   const cycleTextSize = () => {
@@ -2890,10 +3760,12 @@ function AccessibilityBar({
         <span>Contrast</span>
       </button>
 
-      <button onClick={onSwitchRole} aria-label="Switch between patient and caregiver mode">
-        <Users size={16} />
-        <span>{currentScreen === 'caregiver' ? 'Patient' : 'Caregiver'}</span>
-      </button>
+      {showRoleSwitch && (
+        <button onClick={onSwitchRole} aria-label="Switch between patient and caregiver mode">
+          <Users size={16} />
+          <span>{currentScreen === 'caregiver' ? 'Patient' : 'Caregiver'}</span>
+        </button>
+      )}
     </nav>
   )
 }

@@ -8,12 +8,23 @@ from datetime import datetime
 # --- Auth & Registration ---
 class PatientRegisterRequest(BaseModel):
     display_name: str = Field(default="Robert Jenkins", description="Patient name")
+    email: Optional[str] = Field(default=None, description="Patient's personal Gmail / email")
+    phone: Optional[str] = Field(default=None, description="Patient's contact or emergency phone")
+    age: Optional[int] = Field(default=None, description="Patient's age")
+    emergency_contact_name: Optional[str] = Field(default=None, description="Family or emergency contact person")
+    doctor_name: Optional[str] = Field(default=None, description="Primary doctor's name")
+    doctor_email: Optional[str] = Field(default=None, description="Primary doctor's Gmail / email")
+    doctor_specialty: Optional[str] = Field(default=None, description="Doctor specialty / clinic")
+    doctor_phone: Optional[str] = Field(default=None, description="Doctor clinic phone")
     preferred_script: Literal["en"] = Field(default="en", description="English language setting")
 
 
 class PatientRegisterResponse(BaseModel):
     patient_id: str
     display_name: str
+    email: Optional[str] = None
+    doctor_name: Optional[str] = None
+    doctor_email: Optional[str] = None
     device_token: str
     message: str
 
@@ -239,6 +250,9 @@ class PatientProfile(BaseModel):
     patient_id: str
     display_name: str
     email: Optional[str] = None
+    phone: Optional[str] = None
+    age: Optional[int] = None
+    emergency_contact_name: Optional[str] = None
     doctor_name: Optional[str] = None
     doctor_email: Optional[str] = None
     doctor_specialty: Optional[str] = None
@@ -249,6 +263,9 @@ class PatientProfile(BaseModel):
 class PatientProfileUpdateRequest(BaseModel):
     display_name: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
+    age: Optional[int] = None
+    emergency_contact_name: Optional[str] = None
     doctor_name: Optional[str] = None
     doctor_email: Optional[str] = None
     doctor_specialty: Optional[str] = None
