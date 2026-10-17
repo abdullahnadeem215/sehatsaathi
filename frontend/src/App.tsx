@@ -1,0 +1,2899 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  ArrowLeft, Bell, Check, ChevronRight, CircleHelp, HeartPulse, Keyboard,
+  Mic, PhoneCall, Play, RotateCcw, Send, Settings, ShieldCheck, Sparkles,
+  Users, Volume2, VolumeX, X, Zap, AlertTriangle, Pill, Plus, Trash2,
+  Calendar, CheckCircle2, Clock, Upload, Camera, FileText, Mail, User,
+  Stethoscope, AlertCircle, RefreshCw, Brain
+} from 'lucide-react'
+
+import {
+  API_BASE,
+  TurnResponse,
+  PrescriptionItem,
+  DashboardResponse,
+  CaregiverLinkItem,
+  PairPendingItem,
+  PatientProfile,
+  ExtractedMedicineItem,
+  PrescriptionOCRResponse,
+  DoctorEmailItem,
+  DueReminderResponse,
+  PatientMemoryItem,
+  getPatientToken,
+  getCaregiverToken,
+  setCaregiverToken,
+  registerPatient,
+  getPatientProfile,
+  updatePatientProfile,
+  submitTurn,
+  confirmAction,
+  getReminders,
+  createPairingKey,
+  redeemPairingKey,
+  getPendingPairRequests,
+  decidePairRequest,
+  checkPairStatus,
+  getLinkedCaregivers,
+  revokeCaregiverLink,
+  getCaregiverDashboard,
+  markAlertHandled,
+  addClinicianNote,
+  getPrescriptions,
+  createPrescription,
+  deletePrescription,
+  uploadPrescriptionImage,
+  draftDoctorEmail,
+  approveDoctorEmail,
+  declineDoctorEmail,
+  getDoctorEmails,
+  notifyFamilyEmergency,
+  getDueReminder,
+  recordNaturalIntake,
+  takeReminderWithOffset,
+  getPatientMemories,
+} from './api'
+
+import {
+  playEmergencySiren,
+  stopEmergencySiren,
+  isEmergencySirenPlaying,
+  speakText,
+  stopSpeaking,
+  audioRecorder
+} from './utils/audio'
+
+type Screen = 'role' | 'home' | 'answer' | 'emergency' | 'caregiver'
+type TextSize = 'normal' | 'large' | 'extra'
+
+const textSizes: Record<TextSize, string> = {
+  normal: '24px', // UX-02: Base text size is at least 24px
+  large: '28px',
+  extra: '34px',
+}
+
+export default function App() {
+  const [screen, setScreen] = useState<Screen>(() => {
+    const savedRole = localStorage.getItem('user-role')
+    if (savedRole === 'caregiver') return 'caregiver'
+    if (savedRole === 'patient') return 'home'
+    return 'role'
+  })
+
+  const [textSize, setTextSize] = useState<TextSize>(() => (localStorage.getItem('text-size') as TextSize) || 'normal')
+  const [highContrast, setHighContrast] = useState(false)
+  const [patientName, setPatientName] = useState(() => localStorage.getItem('patient_display_name') || 'Robert Jenkins')
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null)
+
+  // Professional startup splash screen state
+  const [loadingSplash, setLoadingSplash] = useState(true)
+
+  // Modals
+  const [showPairingModal, setShowPairingModal] = useState(false)
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showDoctorModal, setShowDoctorModal] = useState(false)
+  const [showMemoryModal, setShowMemoryModal] = useState(false)
+  const [dueReminder, setDueReminder] = useState<DueReminderResponse | null>(null)
+  const [dismissedDueReminderId, setDismissedDueReminderId] = useState<number | null>(null)
+
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    actionId: string
+    echoBack: string
+    emailDraft?: DoctorEmailItem | null
+    toolCalled?: string | null
+  } | null>(null)
+
+  // Turn / Audio State
+  const [turnState, setTurnState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle')
+  const [currentAnswer, setCurrentAnswer] = useState<TurnResponse | null>(null)
+  const [holdingMessage, setHoldingMessage] = useState('')
+  const [linkedCaregiversCount, setLinkedCaregiversCount] = useState(0)
+  const [nextMedicine, setNextMedicine] = useState<string>('Metformin 500 mg · 8:00 AM')
+
+  // Caregiver Live Siren / Emergency state
+  const [activeEmergencyAlert, setActiveEmergencyAlert] = useState<{ id: number; transcript: string; created_at: string } | null>(null)
+  const sirenStopRef = useRef<(() => void) | null>(null)
+
+  // Apply Text Size (UX-02)
+  useEffect(() => {
+    localStorage.setItem('text-size', textSize)
+    document.documentElement.style.setProperty('--base-size', textSizes[textSize])
+  }, [textSize])
+
+  // Periodic Due Reminders Checker
+  const checkDueReminder = async () => {
+    try {
+      const due = await getDueReminder()
+      setDueReminder(due)
+      if (due.has_due_reminder && due.reminder && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('Sehat Saathi Reminder', {
+          body: due.prompt_text || `Did you take your ${due.reminder.medicine_name}?`,
+          icon: '/favicon.ico'
+        })
+      }
+    } catch {
+      // offline fallback
+    }
+  }
+
+  const handleTakeMedicineFromBanner = async (reminderId: number, timeOffsetMinutes: number = 0, note?: string) => {
+    try {
+      const res = await takeReminderWithOffset(reminderId, timeOffsetMinutes, note)
+      speakText(res.message || 'I have recorded that you took your medicine. Well done!')
+      setDismissedDueReminderId(reminderId)
+      await checkDueReminder()
+      await refreshPatientData()
+    } catch (e) {
+      console.error('Failed to log intake:', e)
+    }
+  }
+
+  // Initial Patient Setup & Splash Timer
+  useEffect(() => {
+    async function initPatient() {
+      const token = getPatientToken()
+      if (!token) {
+        try {
+          const reg = await registerPatient('Robert Jenkins')
+          setPatientName(reg.display_name)
+        } catch (e) {
+          console.warn('Auto-registration offline fallback:', e)
+        }
+      }
+      try {
+        const prof = await getPatientProfile()
+        if (prof) {
+          setPatientProfile(prof)
+          if (prof.display_name) setPatientName(prof.display_name)
+        }
+      } catch (e) {
+        // fallback
+      }
+      refreshPatientData()
+      checkDueReminder()
+
+      // Request browser notification permission gently if supported
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {})
+      }
+    }
+    initPatient()
+
+    const reminderTimer = setInterval(checkDueReminder, 25000)
+
+    // Professional startup loading duration (~1.2s)
+    const splashTimer = setTimeout(() => {
+      setLoadingSplash(false)
+    }, 1200)
+    return () => {
+      clearTimeout(splashTimer)
+      clearInterval(reminderTimer)
+    }
+  }, [])
+
+  // Refresh Patient Reminders, Linked count & Profile
+  const refreshPatientData = async () => {
+    try {
+      const links = await getLinkedCaregivers()
+      setLinkedCaregiversCount(links.filter((l) => l.is_active).length)
+      const reminders = await getReminders()
+      if (reminders && reminders.length > 0) {
+        const rem = reminders[0]
+        setNextMedicine(`${rem.medicine_name} ${rem.dose_text} · ${rem.timing_text}`)
+      }
+      const prof = await getPatientProfile()
+      if (prof) {
+        setPatientProfile(prof)
+        if (prof.display_name) setPatientName(prof.display_name)
+      }
+    } catch (e) {
+      // offline silent fallback
+    }
+  }
+
+  // Handle Role Selection
+  const chooseRole = (role: 'patient' | 'caregiver') => {
+    localStorage.setItem('user-role', role)
+    if (role === 'caregiver') {
+      setScreen('caregiver')
+    } else {
+      setScreen('home')
+      refreshPatientData()
+    }
+  }
+
+  // Primary Action: Submit Question (Voice or Typed)
+  const handleQuerySubmit = async (queryText?: string, audioBase64?: string | null) => {
+    setTurnState('thinking')
+    setHoldingMessage('')
+
+    // UX-21: Holding phrase if > 4s
+    const holdingTimer = window.setTimeout(() => {
+      setHoldingMessage('Please wait a moment...')
+    }, 4000)
+
+    try {
+      const response = await submitTurn({ text: queryText, audio_base64: audioBase64 })
+      clearTimeout(holdingTimer)
+      setHoldingMessage('')
+
+      // Red-Flag Emergency Detected (UX-27)
+      if (response.is_emergency || response.ui_state === 'emergency') {
+        setCurrentAnswer(response)
+        setTurnState('idle')
+        setScreen('emergency')
+        sirenStopRef.current = playEmergencySiren()
+        speakText('Emergency detected. Please call 911 immediately. Your family caregiver buzzer has been alerted.')
+        return
+      }
+
+      // Action requiring confirmation (UX-14) or Doctor Email Approval
+      if (response.pending_action_id && response.echo_back) {
+        setPendingConfirm({
+          actionId: response.pending_action_id,
+          echoBack: response.echo_back,
+          emailDraft: response.email_draft,
+          toolCalled: response.tool_called,
+        })
+        setTurnState('idle')
+        speakText(response.echo_back)
+        return
+      }
+
+      // Standard Grounded Answer or Intake confirmation
+      setCurrentAnswer(response)
+      setTurnState('speaking')
+      setScreen('answer')
+      speakText(response.answer)
+      refreshPatientData()
+      checkDueReminder()
+    } catch (err: any) {
+      clearTimeout(holdingTimer)
+      setTurnState('idle')
+      // UX-24: Never show technical jargon
+      alert('I could not hear that clearly. Please say it again or type your question below.')
+    }
+  }
+
+  // Handle Confirm-Before-Act Decision (UX-14, UX-15)
+  const handleConfirmDecision = async (confirmed: boolean) => {
+    if (!pendingConfirm) return
+    try {
+      const res = await confirmAction(pendingConfirm.actionId, confirmed)
+      setPendingConfirm(null)
+      if (confirmed) {
+        speakText(res.message || 'Confirmed and saved.')
+        refreshPatientData()
+      } else {
+        // UX-15: Polite 'No' handling returns to home
+        speakText('All right, please say it again.')
+      }
+    } catch (e) {
+      setPendingConfirm(null)
+    }
+  }
+
+  // Emergency Siren Handlers for Caregiver & Patient
+  const handleSilenceSiren = () => {
+    if (sirenStopRef.current) {
+      sirenStopRef.current()
+      sirenStopRef.current = null
+    }
+    stopEmergencySiren()
+    stopSpeaking()
+  }
+
+  const handleMarkEmergencyHandled = async (alertId: number) => {
+    handleSilenceSiren()
+    await markAlertHandled(alertId)
+    setActiveEmergencyAlert(null)
+  }
+
+  return (
+    <div className={`app ${highContrast ? 'high-contrast' : ''}`}>
+      {/* 0. Professional Startup Splash Screen */}
+      {loadingSplash && <SplashScreen />}
+
+      {/* 1. Role Selection Screen */}
+      {screen === 'role' && <RoleScreen onChoose={chooseRole} />}
+
+      {/* 2. Patient Home Screen */}
+      {screen === 'home' && (
+        <HomeScreen
+          patientName={patientName}
+          patientProfile={patientProfile}
+          nextMedicine={nextMedicine}
+          turnState={turnState}
+          holdingMessage={holdingMessage}
+          linkedCaregiversCount={linkedCaregiversCount}
+          dueReminder={dueReminder}
+          dismissedDueReminderId={dismissedDueReminderId}
+          onSubmitQuery={handleQuerySubmit}
+          onTakeMedicine={handleTakeMedicineFromBanner}
+          onDismissDueReminder={(remId) => setDismissedDueReminderId(remId)}
+          onEmergencyClick={async () => {
+            setScreen('emergency')
+            sirenStopRef.current = playEmergencySiren()
+            speakText('Emergency assistance requested. Please call 911 immediately. Alerting your family.')
+            try {
+              await notifyFamilyEmergency()
+            } catch (e) {
+              console.warn('Emergency notification fallback:', e)
+            }
+          }}
+          onFamilyClick={() => setShowPairingModal(true)}
+          onPrescriptionsClick={() => setShowPrescriptionModal(true)}
+          onDoctorClick={() => setShowDoctorModal(true)}
+          onProfileClick={() => setShowProfileModal(true)}
+          onMemoryClick={() => setShowMemoryModal(true)}
+          onRoleSwitch={() => setScreen('role')}
+        />
+      )}
+
+      {/* 3. Patient Answer Screen */}
+      {screen === 'answer' && currentAnswer && (
+        <AnswerScreen
+          answer={currentAnswer}
+          onBack={() => {
+            stopSpeaking()
+            setTurnState('idle')
+            setScreen('home')
+          }}
+        />
+      )}
+
+      {/* 4. Patient Emergency Screen (UX-27) */}
+      {screen === 'emergency' && (
+        <EmergencyScreen
+          linkedCount={linkedCaregiversCount}
+          onSilenceSiren={handleSilenceSiren}
+          onRestartSiren={() => {
+            sirenStopRef.current = playEmergencySiren()
+          }}
+          onBack={() => {
+            handleSilenceSiren()
+            setScreen('home')
+          }}
+        />
+      )}
+
+      {/* 5. Caregiver Screen (Key Entry or Scoped Dashboard) */}
+      {screen === 'caregiver' && (
+        <CaregiverScreen
+          onSwitchToPatient={() => {
+            localStorage.setItem('user-role', 'patient')
+            setScreen('home')
+          }}
+          patientProfile={patientProfile}
+          activeEmergencyAlert={activeEmergencyAlert}
+          setActiveEmergencyAlert={setActiveEmergencyAlert}
+          onTriggerSiren={(alert) => {
+            setActiveEmergencyAlert(alert)
+            sirenStopRef.current = playEmergencySiren()
+          }}
+          onSilenceSiren={handleSilenceSiren}
+          onMarkHandled={handleMarkEmergencyHandled}
+          onDoctorClick={() => setShowDoctorModal(true)}
+          onProfileClick={() => setShowProfileModal(true)}
+        />
+      )}
+
+      {/* Confirm-Before-Act Modal (UX-14, UX-15, Doctor Email Approval) */}
+      {pendingConfirm && (
+        <ConfirmModal
+          echoBack={pendingConfirm.echoBack}
+          emailDraft={pendingConfirm.emailDraft}
+          onConfirm={() => handleConfirmDecision(true)}
+          onReject={() => handleConfirmDecision(false)}
+        />
+      )}
+
+      {/* Patient Family Pairing Modal (UX-40, UX-41, UX-42) */}
+      {showPairingModal && (
+        <FamilyPairingModal
+          onClose={() => {
+            setShowPairingModal(false)
+            refreshPatientData()
+          }}
+        />
+      )}
+
+      {/* Prescriptions Management Modal (With OCR & Missing Timing Detection) */}
+      {showPrescriptionModal && (
+        <PrescriptionsModal
+          role={screen === 'caregiver' ? 'caregiver' : 'patient'}
+          onClose={() => {
+            setShowPrescriptionModal(false)
+            refreshPatientData()
+          }}
+        />
+      )}
+
+      {/* Patient Profile & Doctor Setup Modal */}
+      {showProfileModal && (
+        <PatientProfileModal
+          profile={patientProfile}
+          onClose={() => {
+            setShowProfileModal(false)
+            refreshPatientData()
+          }}
+        />
+      )}
+
+      {/* AI Doctor Consultation & Email Approval Modal (Strict Consent) */}
+      {showDoctorModal && (
+        <DoctorConsultModal
+          patientProfile={patientProfile}
+          role={screen === 'caregiver' ? 'caregiver' : 'patient'}
+          onClose={() => setShowDoctorModal(false)}
+        />
+      )}
+
+      {/* Agent Conversation Memory & Context Awareness Modal */}
+      {showMemoryModal && (
+        <MemoryModal
+          onClose={() => setShowMemoryModal(false)}
+          onTestQuery={(q) => handleQuerySubmit(q, null)}
+        />
+      )}
+
+      {/* Persistent Accessibility Bar (UX-02, UX-04) */}
+      {screen !== 'role' && (
+        <AccessibilityBar
+          textSize={textSize}
+          setTextSize={setTextSize}
+          highContrast={highContrast}
+          setHighContrast={setHighContrast}
+          currentScreen={screen}
+          onSwitchRole={() => setScreen(screen === 'caregiver' ? 'home' : 'caregiver')}
+        />
+      )}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Role Selection Screen (UX-39)
+------------------------------------------------------------- */
+function RoleScreen({ onChoose }: { onChoose: (role: 'patient' | 'caregiver') => void }) {
+  return (
+    <main className="center-page role-page">
+      <div className="welcome-art">
+        <HeartPulse size={48} strokeWidth={1.8} />
+      </div>
+      <div className="brand">
+        <span className="brand-mark"><HeartPulse size={22} /></span>
+        <span>Sehat Saathi</span>
+      </div>
+      <p className="eyebrow" style={{ marginTop: 12 }}>YOUR GENTLE HEALTH COMPANION</p>
+      <h1>Who are you today?</h1>
+      <p className="muted" style={{ maxWidth: 440, marginTop: 10 }}>
+        A simpler, safer way to manage medicine and stay connected with loved ones.
+      </p>
+
+      <div className="role-options">
+        <button className="role-card" onClick={() => onChoose('patient')}>
+          <span className="role-icon"><HeartPulse size={30} /></span>
+          <span>
+            <strong>I am the Patient</strong>
+            <small>Speak directly with your health assistant</small>
+          </span>
+          <ChevronRight size={24} />
+        </button>
+
+        <button className="role-card" onClick={() => onChoose('caregiver')}>
+          <span className="role-icon blue"><Users size={30} /></span>
+          <span>
+            <strong>I am a Family Member / Caregiver</strong>
+            <small>Monitor vitals, receive emergency alerts, and manage prescriptions</small>
+          </span>
+          <ChevronRight size={24} />
+        </button>
+      </div>
+
+      <p className="muted" style={{ fontSize: '0.8rem', marginTop: 28, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <ShieldCheck size={18} /> English-only Edition · WCAG AAA Accessible
+      </p>
+    </main>
+  )
+}
+
+/* -------------------------------------------------------------
+   Patient Home Screen (UX-01, UX-10, UX-11, UX-17, UX-40)
+------------------------------------------------------------- */
+function HomeScreen({
+  patientName,
+  patientProfile,
+  nextMedicine,
+  turnState,
+  holdingMessage,
+  linkedCaregiversCount,
+  dueReminder,
+  dismissedDueReminderId,
+  onSubmitQuery,
+  onTakeMedicine,
+  onDismissDueReminder,
+  onEmergencyClick,
+  onFamilyClick,
+  onPrescriptionsClick,
+  onDoctorClick,
+  onProfileClick,
+  onMemoryClick,
+  onRoleSwitch,
+}: {
+  patientName: string
+  patientProfile: PatientProfile | null
+  nextMedicine: string
+  turnState: 'idle' | 'listening' | 'thinking' | 'speaking'
+  holdingMessage: string
+  linkedCaregiversCount: number
+  dueReminder: DueReminderResponse | null
+  dismissedDueReminderId: number | null
+  onSubmitQuery: (text?: string, audioBase64?: string | null) => void
+  onTakeMedicine: (reminderId: number, timeOffsetMinutes: number, note?: string) => void
+  onDismissDueReminder: (reminderId: number) => void
+  onEmergencyClick: () => void
+  onFamilyClick: () => void
+  onPrescriptionsClick: () => void
+  onDoctorClick: () => void
+  onProfileClick: () => void
+  onMemoryClick: () => void
+  onRoleSwitch: () => void
+}) {
+  const [typedQuestion, setTypedQuestion] = useState('')
+  const [showTypedInput, setShowTypedInput] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+
+  // Primary Mic Tap Handler (UX-10: Single tap starts, second tap stops)
+  const handleMicTap = async () => {
+    if (!isRecording) {
+      const started = await audioRecorder.start()
+      if (started) {
+        setIsRecording(true)
+      } else {
+        // Fallback: prompt typed query if mic unsupported or denied
+        setShowTypedInput(true)
+      }
+    } else {
+      setIsRecording(false)
+      const base64Audio = await audioRecorder.stop()
+      onSubmitQuery(undefined, base64Audio)
+    }
+  }
+
+  const handleSendTyped = () => {
+    if (!typedQuestion.trim()) return
+    const text = typedQuestion.trim()
+    setTypedQuestion('')
+    setShowTypedInput(false)
+    onSubmitQuery(text, null)
+  }
+
+  return (
+    <main className="page">
+      {/* Top Bar with Persistent Help & Family */}
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark"><HeartPulse size={22} /></span>
+          <span>Sehat Saathi</span>
+        </div>
+        <div className="header-actions">
+          <button className="icon-button" onClick={onMemoryClick} aria-label="Agent Conversation Memory & Recall">
+            <Brain size={20} color="var(--green)" />
+            <span>Memory</span>
+          </button>
+          <button className="icon-button" onClick={onPrescriptionsClick} aria-label="Prescriptions and scan">
+            <Pill size={20} />
+            <span>Medicines</span>
+          </button>
+          <button className="icon-button" onClick={onDoctorClick} aria-label="Consult Doctor">
+            <Mail size={20} />
+            <span>Doctor</span>
+          </button>
+          <button className="icon-button" onClick={onFamilyClick} aria-label="Family and caregivers">
+            <Users size={20} />
+            <span>Family {linkedCaregiversCount > 0 && `(${linkedCaregiversCount})`}</span>
+          </button>
+          <button className="icon-button" onClick={onProfileClick} aria-label="Account and Profile Settings">
+            <User size={20} />
+            <span>Profile</span>
+          </button>
+          <button className="icon-button emergency-mini" onClick={onEmergencyClick} aria-label="Emergency Assistance">
+            <CircleHelp size={20} />
+            <span>911 Help</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Patient Greeting & Status */}
+      <section className="home-heading">
+        <div className="status-pill">
+          <span className="status-dot-inner" />
+          <span>Assistant Online · English</span>
+        </div>
+        <h1 style={{ marginTop: 12 }}>Good morning, {patientName}</h1>
+        <p className="muted">What can I help you with today?</p>
+      </section>
+
+      {/* Active Medication Due Notification Banner */}
+      {dueReminder && dueReminder.has_due_reminder && dueReminder.reminder && dismissedDueReminderId !== dueReminder.reminder.id && (
+        <section
+          className="medication-due-banner animate-fade-in"
+          style={{
+            background: '#ecfdf5',
+            border: '2px solid #10b981',
+            borderRadius: 16,
+            padding: '16px 20px',
+            margin: '14px 0 20px 0',
+            boxShadow: '0 4px 14px rgba(16, 185, 129, 0.12)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+              <Bell size={22} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Medication Check
+              </div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#064e3b', marginTop: 2 }}>
+                {dueReminder.prompt_text || `Did you take your ${dueReminder.reminder.medicine_name} ${dueReminder.reminder.dose_text}?`}
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: '0.88rem', color: '#065f46' }}>
+                Scheduled for {dueReminder.reminder.timing_text}. Tap below or speak your response naturally!
+              </p>
+            </div>
+            <button
+              onClick={() => onDismissDueReminder(dueReminder.reminder!.id)}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#6b7280', padding: 4 }}
+              title="Dismiss for now"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+            <button
+              onClick={() => onTakeMedicine(dueReminder.reminder!.id, 0, 'Taken just now')}
+              style={{
+                background: '#059669', color: '#fff', border: 'none', borderRadius: 10,
+                padding: '10px 16px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', minHeight: 46
+              }}
+            >
+              <Check size={18} />
+              <span>✓ Yes, just now</span>
+            </button>
+
+            <button
+              onClick={() => onTakeMedicine(dueReminder.reminder!.id, 60, 'Patient took 1 hour ago')}
+              style={{
+                background: '#ffffff', color: '#065f46', border: '1.5px solid #059669', borderRadius: 10,
+                padding: '10px 16px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', minHeight: 46
+              }}
+            >
+              <Clock size={18} />
+              <span>⏰ Took 1 hour ago</span>
+            </button>
+
+            <button
+              onClick={() => onTakeMedicine(dueReminder.reminder!.id, 30, 'Patient took 30 min ago')}
+              style={{
+                background: '#ffffff', color: '#065f46', border: '1.5px solid #059669', borderRadius: 10,
+                padding: '10px 16px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', minHeight: 46
+              }}
+            >
+              <Clock size={18} />
+              <span>⏰ 30 min ago</span>
+            </button>
+
+            <button
+              onClick={() => {
+                speakText(`Did you take your ${dueReminder.reminder!.medicine_name}? You can say 'Yes' or 'I took it 1 hour ago'.`)
+              }}
+              style={{
+                background: '#ffffff', color: '#374151', border: '1.5px solid #d1d5db', borderRadius: 10,
+                padding: '10px 16px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', minHeight: 46
+              }}
+            >
+              <Mic size={18} />
+              <span>Speak answer</span>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Daily Medication Card */}
+      <section className="daily-card" onClick={onPrescriptionsClick} style={{ cursor: 'pointer' }}>
+        <div className="daily-icon">
+          <Bell size={24} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <strong>Today at a glance</strong>
+          <p>{nextMedicine}</p>
+        </div>
+        <ChevronRight size={22} color="var(--muted)" />
+      </section>
+
+      {/* Voice Zone with 120px+ Big Microphone Button (UX-01) */}
+      <section className="voice-zone">
+        {isRecording ? (
+          <div className="state-badge listening">
+            <Mic size={18} />
+            <span>I am listening... tap again when done</span>
+          </div>
+        ) : turnState === 'thinking' ? (
+          <div className="state-badge thinking">
+            <Sparkles size={18} />
+            <span>{holdingMessage || 'I am thinking...'}</span>
+          </div>
+        ) : null}
+
+        {isRecording && (
+          <div className="waveform">
+            <i /><i /><i /><i /><i /><i /><i />
+          </div>
+        )}
+
+        <button
+          className={`mic-button ${isRecording ? 'listening' : ''}`}
+          onClick={handleMicTap}
+          aria-label={isRecording ? 'Stop listening and submit' : 'Tap to speak'}
+        >
+          <span className="mic-ring">
+            <Mic size={52} strokeWidth={1.8} />
+          </span>
+        </button>
+
+        <h2>{isRecording ? 'Tap to finish' : 'Tap to speak'}</h2>
+        <p className="muted">Ask anything about your medicines, foods, or discharge notes</p>
+      </section>
+
+      {/* Typed Input Fallback (UX-11: Reachable in 1 Tap) */}
+      {showTypedInput ? (
+        <div className="type-row">
+          <input
+            autoFocus
+            type="text"
+            value={typedQuestion}
+            onChange={(e) => setTypedQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSendTyped()}
+            placeholder="Type your question here..."
+            aria-label="Type your question"
+          />
+          <button className="send-button" onClick={handleSendTyped} aria-label="Send question">
+            <Send size={22} />
+          </button>
+        </div>
+      ) : (
+        <button className="type-link" onClick={() => setShowTypedInput(true)}>
+          <Keyboard size={20} />
+          <span>Type a question instead</span>
+        </button>
+      )}
+
+      {/* Quick Prompts */}
+      <div className="quick-links">
+        <button onClick={onDoctorClick} style={{ borderColor: 'var(--green)', background: '#f4fbf5' }}>
+          <Mail size={18} color="var(--green)" />
+          <span style={{ fontWeight: 700, color: 'var(--green-dark)' }}>Draft Email to Doctor</span>
+        </button>
+        <button onClick={() => onSubmitQuery("I've took this 1 hour till now")} style={{ borderColor: '#86efac', background: '#f0fdf4' }}>
+          <Clock size={18} color="var(--green)" />
+          <span style={{ fontWeight: 700, color: '#166534' }}>"I've took this 1 hour till now"</span>
+        </button>
+        <button onClick={() => onSubmitQuery("Did I take my medicine?")} style={{ borderColor: '#93c5fd', background: '#eff6ff' }}>
+          <Brain size={18} color="#2563eb" />
+          <span style={{ fontWeight: 700, color: '#1e40af' }}>"Did I take my medicine?"</span>
+        </button>
+        <button onClick={() => onSubmitQuery('When should I take Metformin?')}>
+          <Pill size={18} color="var(--green)" />
+          <span>When to take Metformin?</span>
+        </button>
+        <button onClick={() => onSubmitQuery('Can I take a warm shower after surgery?')}>
+          <Sparkles size={18} color="var(--green)" />
+          <span>Can I take a warm shower?</span>
+        </button>
+        <button onClick={() => onSubmitQuery('What food can I eat today?')}>
+          <Sparkles size={18} color="var(--green)" />
+          <span>What foods can I eat?</span>
+        </button>
+        <button onClick={() => onSubmitQuery('I have the pain in my heart so hard')} style={{ borderColor: '#fca5a5' }}>
+          <AlertTriangle size={18} color="var(--crimson)" />
+          <span style={{ color: 'var(--crimson)', fontWeight: 700 }}>Test: Severe heart pain alert</span>
+        </button>
+      </div>
+
+      {/* Urgent Help Footer Strip */}
+      <div className="help-strip">
+        <PhoneCall size={22} />
+        <span>Need emergency help right away?</span>
+        <button onClick={onEmergencyClick}>
+          <span>Emergency</span>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </main>
+  )
+}
+
+/* -------------------------------------------------------------
+   Patient Answer & Grounding View (UX-12, UX-13, UX-16)
+------------------------------------------------------------- */
+function AnswerScreen({ answer, onBack }: { answer: TurnResponse; onBack: () => void }) {
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [playbackSpeed, setPlaybackSpeed] = useState<0.75 | 1.0>(1.0)
+
+  const handleReplay = () => {
+    setIsPlaying(true)
+    speakText(answer.answer, playbackSpeed)
+  }
+
+  const toggleSpeed = () => {
+    const newSpeed = playbackSpeed === 1.0 ? 0.75 : 1.0
+    setPlaybackSpeed(newSpeed)
+    speakText(answer.answer, newSpeed)
+  }
+
+  const togglePlayPause = () => {
+    if (isPlaying) {
+      stopSpeaking()
+      setIsPlaying(false)
+    } else {
+      setIsPlaying(true)
+      speakText(answer.answer, playbackSpeed)
+    }
+  }
+
+  return (
+    <main className="page answer-page">
+      <div className="answer-top">
+        <button className="back-button" onClick={onBack}>
+          <ArrowLeft size={20} />
+          <span>Back to Home</span>
+        </button>
+        <div className="brand">
+          <span className="brand-mark"><HeartPulse size={20} /></span>
+          <span>Sehat Saathi</span>
+        </div>
+      </div>
+
+      {/* Transcript of patient query */}
+      {answer.transcript && (
+        <div className="answer-question">
+          “{answer.transcript}”
+        </div>
+      )}
+
+      {/* Grounding Confidence Badge (UX-16) */}
+      <div className={`confidence-badge ${answer.confidence_badge.toLowerCase()}`}>
+        {answer.confidence_badge === 'Certain' ? (
+          <CheckCircle2 size={16} />
+        ) : answer.confidence_badge === 'Possibly' ? (
+          <AlertTriangle size={16} />
+        ) : (
+          <CircleHelp size={16} />
+        )}
+        <span>{answer.confidence_badge} Grounding ({Math.round(answer.confidence * 100)}%)</span>
+      </div>
+
+      {/* Primary Headline Answer */}
+      <h1 className="answer-headline">{answer.answer}</h1>
+
+      {/* Grounding Source Citation Card (UX-16) */}
+      {answer.source_line && (
+        <div className="source-card">
+          <div className="source-title">
+            <ShieldCheck size={18} />
+            <span>From your discharge summary</span>
+          </div>
+          <p>“{answer.source_line}”</p>
+        </div>
+      )}
+
+      {/* Synchronized Captions (UX-13) */}
+      <div className="caption-card">
+        <span className="caption-label">
+          <Volume2 size={16} /> Spoken Words
+        </span>
+        <p>
+          <mark>{answer.answer}</mark>
+        </p>
+      </div>
+
+      {/* Audio Controls Bar (UX-12) */}
+      <div className="audio-actions">
+        <button onClick={handleReplay} aria-label="Replay audio">
+          <RotateCcw size={18} />
+          <span>Replay</span>
+        </button>
+        <button onClick={togglePlayPause} aria-label={isPlaying ? 'Pause audio' : 'Play audio'}>
+          {isPlaying ? <VolumeX size={18} /> : <Play size={18} />}
+          <span>{isPlaying ? 'Pause' : 'Play'}</span>
+        </button>
+        <button onClick={toggleSpeed} aria-label="Toggle playback speed">
+          <Zap size={18} />
+          <span>{playbackSpeed === 0.75 ? 'Speed: Slower (0.75x)' : 'Speed: Normal (1.0x)'}</span>
+        </button>
+      </div>
+
+      <button className="done-button" onClick={onBack}>
+        That’s all, thank you
+      </button>
+    </main>
+  )
+}
+
+/* -------------------------------------------------------------
+   Emergency Screen (UX-27)
+------------------------------------------------------------- */
+function EmergencyScreen({
+  linkedCount,
+  onSilenceSiren,
+  onRestartSiren,
+  onBack,
+}: {
+  linkedCount: number
+  onSilenceSiren: () => void
+  onRestartSiren: () => void
+  onBack: () => void
+}) {
+  const [isSirenOn, setIsSirenOn] = useState(() => isEmergencySirenPlaying())
+
+  // Ensure siren starts playing when screen is mounted
+  useEffect(() => {
+    if (!isEmergencySirenPlaying()) {
+      onRestartSiren()
+      setIsSirenOn(true)
+    }
+  }, [])
+
+  const handleToggleSiren = () => {
+    if (isSirenOn) {
+      onSilenceSiren()
+      setIsSirenOn(false)
+    } else {
+      onRestartSiren()
+      setIsSirenOn(true)
+    }
+  }
+
+  return (
+    <main className="emergency-page">
+      <div className="emergency-siren-pill">
+        <AlertTriangle size={20} />
+        <span>EMERGENCY SIREN {isSirenOn ? 'ACTIVE' : 'MUTED'}</span>
+      </div>
+
+      <div className="emergency-icon">
+        <PhoneCall size={44} color="#ffffff" />
+      </div>
+      <p className="eyebrow" style={{ color: '#fecaca', letterSpacing: '0.15em' }}>EMERGENCY ASSISTANCE</p>
+      <h1>Help is close by</h1>
+      <p>
+        For chest pain, breathlessness, stroke signs, or severe discomfort, call <strong>911</strong> immediately.
+      </p>
+
+      <a href="tel:911" className="call-button">
+        <PhoneCall size={28} />
+        <span>Call 911 Now</span>
+      </a>
+
+      {/* Prominent Mute / Unmute Siren Control */}
+      <button
+        type="button"
+        className="emergency-silence-btn"
+        onClick={handleToggleSiren}
+        aria-label={isSirenOn ? 'Silence emergency buzzer' : 'Turn on emergency buzzer'}
+      >
+        {isSirenOn ? (
+          <>
+            <VolumeX size={22} />
+            <span>Silence Emergency Buzzer</span>
+          </>
+        ) : (
+          <>
+            <Volume2 size={22} />
+            <span>Sound Emergency Buzzer</span>
+          </>
+        )}
+      </button>
+
+      <div className="notify-card">
+        <strong>Family Notification Status</strong>
+        <p>
+          {linkedCount > 0
+            ? '✓ Your linked family caregiver has been sent an emergency siren buzzer!'
+            : 'No family member is linked yet. Please call 911 or emergency services.'}
+        </p>
+      </div>
+
+      <button
+        onClick={onBack}
+        style={{
+          marginTop: 24,
+          background: 'transparent',
+          color: '#fee2e2',
+          border: '2px solid rgba(255,255,255,0.4)',
+          borderRadius: 16,
+          padding: '14px 28px',
+          fontWeight: 700,
+          cursor: 'pointer',
+        }}
+      >
+        Back to Home
+      </button>
+    </main>
+  )
+}
+
+/* -------------------------------------------------------------
+   Confirm-Before-Act Modal (UX-14, UX-15)
+------------------------------------------------------------- */
+function ConfirmModal({
+  echoBack,
+  emailDraft,
+  onConfirm,
+  onReject,
+}: {
+  echoBack: string
+  emailDraft?: DoctorEmailItem | null
+  onConfirm: () => void
+  onReject: () => void
+}) {
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: emailDraft ? 620 : 480 }}>
+        {emailDraft ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span className="email-status-badge draft">Agent Decision: Draft Doctor Email</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Strict Explicit Consent</span>
+            </div>
+            <h2 style={{ fontSize: '1.4rem', marginBottom: 6 }}>Review Email for Dr. {emailDraft.doctor_name}</h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              The assistant drafted this clinical message with your medical history and current issue. It will <strong>never</strong> be sent without your approval.
+            </p>
+
+            <div style={{ background: '#f8fafc', border: '1px solid var(--line)', borderRadius: 12, padding: 14, marginBottom: 16, textAlign: 'left' }}>
+              <div style={{ marginBottom: 8, fontSize: '0.85rem' }}>
+                <strong>To:</strong> Dr. {emailDraft.doctor_name} &lt;{emailDraft.doctor_email}&gt;
+              </div>
+              <div style={{ marginBottom: 8, fontSize: '0.85rem' }}>
+                <strong>Subject:</strong> {emailDraft.subject}
+              </div>
+              <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10, fontSize: '0.85rem', whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto', color: 'var(--ink)' }}>
+                {emailDraft.body}
+              </div>
+            </div>
+
+            <div className="confirm-actions">
+              <button className="btn-confirm-yes" onClick={onConfirm} style={{ background: 'var(--green)', borderColor: 'var(--green)' }}>
+                <Check size={22} />
+                <span>Approve & Send to Doctor</span>
+              </button>
+              <button className="btn-confirm-no" onClick={onReject}>
+                <X size={22} />
+                <span>Decline / Discard</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="eyebrow">CONFIRM BEFORE ACT</p>
+            <h2>Please confirm this action</h2>
+            <div className="confirm-box">
+              “{echoBack}”
+            </div>
+            <p className="muted">Is this correct?</p>
+            <div className="confirm-actions">
+              <button className="btn-confirm-yes" onClick={onConfirm}>
+                <Check size={24} />
+                <span>Yes, correct</span>
+              </button>
+              <button className="btn-confirm-no" onClick={onReject}>
+                <X size={24} />
+                <span>No, say again</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Patient Family & Pairing Modal (UX-40, UX-41, UX-42)
+------------------------------------------------------------- */
+function FamilyPairingModal({ onClose }: { onClose: () => void }) {
+  const [keyData, setKeyData] = useState<{ raw: string; formatted: string; expiresAt: string } | null>(null)
+  const [secondsLeft, setSecondsLeft] = useState(600)
+  const [pendingRequests, setPendingRequests] = useState<PairPendingItem[]>([])
+  const [linkedCaregivers, setLinkedCaregivers] = useState<CaregiverLinkItem[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Generate pairing key on open
+  const handleGenerateKey = async () => {
+    setIsLoading(true)
+    try {
+      const res = await createPairingKey()
+      setKeyData({ raw: res.key, formatted: res.formatted_key, expiresAt: res.expires_at })
+      setSecondsLeft(res.expires_in_seconds)
+    } catch (e) {
+      alert('Could not create key. Please check connection.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Load active links
+  const loadLinks = async () => {
+    try {
+      const links = await getLinkedCaregivers()
+      setLinkedCaregivers(links)
+    } catch (e) {}
+  }
+
+  useEffect(() => {
+    handleGenerateKey()
+    loadLinks()
+  }, [])
+
+  // 10-minute timer countdown
+  useEffect(() => {
+    if (secondsLeft <= 0) return
+    const timer = setInterval(() => setSecondsLeft((s) => s - 1), 1000)
+    return () => clearInterval(timer)
+  }, [secondsLeft])
+
+  // Poll for incoming caregiver consent requests (UX-42)
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const pending = await getPendingPairRequests()
+        setPendingRequests(pending)
+      } catch (e) {}
+    }, 2000)
+    return () => clearInterval(pollInterval)
+  }, [])
+
+  // Read code aloud
+  const handleReadAloud = () => {
+    if (!keyData) return
+    const spelled = keyData.raw.split('').join(', ')
+    speakText(`Your code is: ${spelled}`)
+  }
+
+  // Approve or decline request
+  const handleDecide = async (pendingId: number, approve: boolean) => {
+    await decidePairRequest(pendingId, approve)
+    setPendingRequests((prev) => prev.filter((p) => p.pending_id !== pendingId))
+    loadLinks()
+    speakText(approve ? 'Caregiver approved and linked.' : 'Request declined.')
+  }
+
+  const handleRevoke = async (linkId: number) => {
+    if (!confirm('Remove this caregiver?')) return
+    await revokeCaregiverLink(linkId)
+    loadLinks()
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">PATIENT CAREGIVER PAIRING</p>
+            <h2>Link Family Member</h2>
+          </div>
+          <button className="close-btn" onClick={onClose} aria-label="Close modal">
+            <X size={22} />
+          </button>
+        </div>
+
+        {/* Pending Approval Notice (UX-42) */}
+        {pendingRequests.length > 0 && (
+          <div style={{ background: '#fef3c7', border: '2px solid #f59e0b', borderRadius: 16, padding: 18, marginBottom: 20 }}>
+            <h3 style={{ color: '#92400e', marginBottom: 6 }}>Approval Request</h3>
+            <p style={{ color: '#78350f' }}>
+              <strong>{pendingRequests[0].caregiver_name}</strong> wants to connect to your health account.
+            </p>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button
+                style={{ flex: 1, background: 'var(--green)', color: '#fff', borderRadius: 12, fontWeight: 700 }}
+                onClick={() => handleDecide(pendingRequests[0].pending_id, true)}
+              >
+                ✓ Approve
+              </button>
+              <button
+                style={{ flex: 1, background: '#ef4444', color: '#fff', borderRadius: 12, fontWeight: 700 }}
+                onClick={() => handleDecide(pendingRequests[0].pending_id, false)}
+              >
+                ✕ Decline
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Pairing Key (UX-41) */}
+        <p className="muted">Have your family member open the app and enter this 8-character code:</p>
+
+        {keyData && (
+          <div className="key-display">
+            <div className="key-segment">{keyData.formatted.split('-')[0]}</div>
+            <span style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--muted)' }}>-</span>
+            <div className="key-segment">{keyData.formatted.split('-')[1]}</div>
+          </div>
+        )}
+
+        <div className="key-timer">
+          <Clock size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+          Expires in {Math.floor(secondsLeft / 60)}:{(secondsLeft % 60).toString().padStart(2, '0')}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="icon-button" style={{ flex: 1 }} onClick={handleReadAloud}>
+            <Volume2 size={18} />
+            <span>Read Aloud</span>
+          </button>
+          <button className="icon-button" style={{ flex: 1 }} onClick={handleGenerateKey} disabled={isLoading}>
+            <RotateCcw size={18} />
+            <span>New Key</span>
+          </button>
+        </div>
+
+        {/* Currently Linked Caregivers List */}
+        <h3 style={{ marginTop: 28, marginBottom: 12, fontSize: '1.1rem' }}>Linked Caregivers</h3>
+        {linkedCaregivers.length === 0 ? (
+          <p className="muted" style={{ fontStyle: 'italic' }}>No family members linked yet.</p>
+        ) : (
+          linkedCaregivers.map((link) => (
+            <div key={link.link_id} className="rx-card">
+              <div>
+                <strong>{link.caregiver_name}</strong>
+                <p>Linked {new Date(link.linked_at).toLocaleDateString()}</p>
+              </div>
+              <button
+                style={{ minHeight: 44, padding: '8px 14px', background: '#fee2e2', color: '#991b1b', borderRadius: 10, fontWeight: 700 }}
+                onClick={() => handleRevoke(link.link_id)}
+              >
+                Remove
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+/* -------------------------------------------------------------
+   Prescription Management Modal (Shared: Patient & Caregiver)
+   Enhanced with AI OCR Prescription Image Extraction & Missing Timing Warning
+------------------------------------------------------------- */
+function PrescriptionsModal({
+  role,
+  onClose,
+}: {
+  role: 'patient' | 'caregiver'
+  onClose: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<'list' | 'scan'>('list')
+  const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([])
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [medName, setMedName] = useState('')
+  const [dose, setDose] = useState('')
+  const [timing, setTiming] = useState('')
+  const [instructions, setInstructions] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // OCR Prescription Image Scanning State
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
+  const [ocrResult, setOcrResult] = useState<PrescriptionOCRResponse | null>(null)
+  const [editableExtractedMeds, setEditableExtractedMeds] = useState<ExtractedMedicineItem[]>([])
+  const [ocrError, setOcrError] = useState<string | null>(null)
+  const [ocrSaveSuccess, setOcrSaveSuccess] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const loadPrescriptions = async () => {
+    try {
+      const list = await getPrescriptions(role)
+      setPrescriptions(list)
+    } catch (e) {}
+  }
+
+  useEffect(() => {
+    loadPrescriptions()
+  }, [])
+
+  // Manual Add Form Submission
+  const handleAddPrescription = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!medName.trim() || !dose.trim() || !timing.trim()) return
+
+    setIsSubmitting(true)
+    try {
+      await createPrescription(
+        {
+          medicine_name: medName.trim(),
+          dose_text: dose.trim(),
+          timing_text: timing.trim(),
+          instructions: instructions.trim() || undefined,
+        },
+        role
+      )
+      setMedName('')
+      setDose('')
+      setTiming('')
+      setInstructions('')
+      setShowAddForm(false)
+      loadPrescriptions()
+      speakText(`Added ${medName} to medications list. Reminders scheduled.`)
+    } catch (err) {
+      alert('Failed to save prescription.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Handle Prescription Image Selection (File or Camera)
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setSelectedFile(file)
+      setPreviewUrl(URL.createObjectURL(file))
+      setOcrResult(null)
+      setEditableExtractedMeds([])
+      setOcrError(null)
+      setOcrSaveSuccess(false)
+    }
+  }
+
+  // Run AI OCR on uploaded image
+  const handleRunOcr = async () => {
+    if (!selectedFile) return
+    setIsScanning(true)
+    setOcrError(null)
+    setOcrResult(null)
+
+    try {
+      const res = await uploadPrescriptionImage(selectedFile)
+      setOcrResult(res)
+      setEditableExtractedMeds(res.extracted_medicines || [])
+
+      if (res.has_missing_info) {
+        speakText('Prescription scanned. Some information is missing, such as when to take the medicine. Please review the highlighted fields.')
+      } else {
+        speakText(`Extracted ${res.extracted_medicines.length} medications from prescription.`)
+      }
+    } catch (err: any) {
+      setOcrError(err.message || 'Failed to extract medications from prescription.')
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
+  // Edit extracted field
+  const updateExtractedMed = (idx: number, field: keyof ExtractedMedicineItem, value: any) => {
+    setEditableExtractedMeds((prev) => {
+      const copy = [...prev]
+      copy[idx] = { ...copy[idx], [field]: value }
+      if (field === 'timing_text' && value.trim()) {
+        copy[idx].missing_fields = copy[idx].missing_fields.filter((f) => f !== 'timing_text')
+      }
+      return copy
+    })
+  }
+
+  // Save all extracted medicines with missing timing validation
+  const handleSaveAllExtracted = async () => {
+    if (editableExtractedMeds.length === 0) return
+
+    // Strict validation: Require medicine name & timing for each entry
+    for (const med of editableExtractedMeds) {
+      if (!med.medicine_name.trim()) {
+        alert('Please specify a medicine name for all extracted entries.')
+        return
+      }
+      if (!med.timing_text.trim()) {
+        alert(`Missing timing: Please enter when to take "${med.medicine_name}" (e.g. "morning after breakfast" or "twice daily") so we can set reminders.`)
+        return
+      }
+    }
+
+    setIsSubmitting(true)
+    try {
+      for (const med of editableExtractedMeds) {
+        await createPrescription(
+          {
+            medicine_name: med.medicine_name.trim(),
+            dose_text: med.dose_text.trim() || '1 dose',
+            timing_text: med.timing_text.trim(),
+            instructions: med.instructions?.trim() || undefined,
+          },
+          role
+        )
+      }
+      setOcrSaveSuccess(true)
+      speakText('All extracted medications saved to schedule.')
+      loadPrescriptions()
+      setTimeout(() => {
+        setActiveTab('list')
+        setOcrResult(null)
+        setSelectedFile(null)
+        setPreviewUrl(null)
+        setOcrSaveSuccess(false)
+      }, 1000)
+    } catch (err) {
+      alert('Failed to save extracted prescriptions.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Remove this prescription?')) return
+    await deletePrescription(id, role)
+    loadPrescriptions()
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: 620 }}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">MEDICATION MANAGEMENT</p>
+            <h2>Prescriptions & Medication</h2>
+          </div>
+          <button className="close-btn" onClick={onClose} aria-label="Close modal">
+            <X size={22} />
+          </button>
+        </div>
+
+        {/* Mode Tabs */}
+        <div className="ocr-mode-tabs">
+          <button
+            className={`ocr-mode-tab ${activeTab === 'list' ? 'active' : ''}`}
+            onClick={() => setActiveTab('list')}
+          >
+            <Pill size={18} />
+            <span>Active Prescriptions ({prescriptions.length})</span>
+          </button>
+          <button
+            className={`ocr-mode-tab ${activeTab === 'scan' ? 'active' : ''}`}
+            onClick={() => setActiveTab('scan')}
+          >
+            <Camera size={18} />
+            <span>📷 Scan Prescription Image (OCR)</span>
+          </button>
+        </div>
+
+        {/* Tab 1: Active Prescriptions & Manual Entry */}
+        {activeTab === 'list' && (
+          <div>
+            <p className="muted" style={{ marginBottom: 16 }}>
+              Medications are automatically tracked with reminders and available to the AI assistant.
+            </p>
+
+            {/* Prescription List */}
+            {prescriptions.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px' }}>
+                <Pill size={40} color="var(--muted)" style={{ opacity: 0.5, marginBottom: 8 }} />
+                <p className="muted" style={{ fontStyle: 'italic' }}>No active prescriptions recorded yet.</p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 14 }}>
+                  <button className="primary-button" style={{ maxWidth: 220 }} onClick={() => setActiveTab('scan')}>
+                    <Camera size={18} />
+                    <span>Scan Prescription Image</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+                {prescriptions.map((rx) => (
+                  <div key={rx.id} className="rx-card">
+                    <div>
+                      <strong>
+                        {rx.medicine_name}
+                        <span className="rx-dose-tag">{rx.dose_text}</span>
+                      </strong>
+                      <p>Schedule: {rx.timing_text}</p>
+                      {rx.instructions && <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Notes: {rx.instructions}</p>}
+                    </div>
+                    <button
+                      style={{ minHeight: 44, width: 44, borderRadius: 10, background: '#fee2e2', color: '#991b1b', display: 'grid', placeItems: 'center' }}
+                      onClick={() => handleDelete(rx.id)}
+                      aria-label="Remove prescription"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add Prescription Toggle or Form */}
+            {showAddForm ? (
+              <form className="rx-form" onSubmit={handleAddPrescription}>
+                <h3 style={{ fontSize: '1.1rem', marginTop: 10 }}>Add New Medication Manually</h3>
+                <label>
+                  Medicine Name
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Aspirin, Metformin"
+                    value={medName}
+                    onChange={(e) => setMedName(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Dose / Strength
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. 75mg, 1 tablet"
+                    value={dose}
+                    onChange={(e) => setDose(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Schedule / Timing
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Once daily with dinner"
+                    value={timing}
+                    onChange={(e) => setTiming(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Special Instructions (Optional)
+                  <textarea
+                    placeholder="e.g. Take with a full glass of water"
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    rows={2}
+                  />
+                </label>
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    style={{ flex: 1, background: 'var(--green)', color: '#fff', borderRadius: 14, fontWeight: 700 }}
+                  >
+                    {isSubmitting ? 'Saving...' : '+ Save Prescription'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddForm(false)}
+                    style={{ background: '#f3f4f6', color: '#374151', borderRadius: 14, padding: '0 18px', fontWeight: 700 }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                <button className="primary-button" style={{ flex: 1 }} onClick={() => setShowAddForm(true)}>
+                  <Plus size={20} />
+                  <span>Manual Entry</span>
+                </button>
+                <button
+                  className="icon-button"
+                  style={{ flex: 1, background: '#f0f7f2', border: '1.5px solid var(--green)', color: 'var(--green-dark)', fontWeight: 700 }}
+                  onClick={() => setActiveTab('scan')}
+                >
+                  <Camera size={20} />
+                  <span>Scan Prescription</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: AI OCR Prescription Image Scan */}
+        {activeTab === 'scan' && (
+          <div>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Upload or snap a photo of your doctor's prescription. AI will extract medications and identify any missing timing instructions.
+            </p>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+            />
+
+            {!previewUrl ? (
+              <div className="ocr-upload-zone" onClick={() => fileInputRef.current?.click()}>
+                <div className="ocr-upload-icon-wrapper">
+                  <Camera size={28} />
+                </div>
+                <strong>Tap to Take Photo or Upload Image</strong>
+                <p className="muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
+                  Supports camera capture, PNG, JPG, or WEBP photos of printed/handwritten prescriptions
+                </p>
+              </div>
+            ) : (
+              <div>
+                <div className="ocr-preview-box">
+                  <img src={previewUrl} alt="Prescription Preview" className="ocr-preview-img" />
+                  {isScanning && (
+                    <div className="ocr-scanning-overlay">
+                      <div className="ocr-scanning-line" />
+                      <RefreshCw size={28} className="spin-slow" />
+                      <strong>Scanning prescription with AI OCR...</strong>
+                      <span style={{ fontSize: '0.8rem', opacity: 0.9 }}>Detecting medicines, dosage, and missing timing</span>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                  <button
+                    className="primary-button"
+                    style={{ flex: 2 }}
+                    onClick={handleRunOcr}
+                    disabled={isScanning}
+                  >
+                    <Sparkles size={18} />
+                    <span>{isScanning ? 'Extracting Medications...' : 'Extract Medications with OCR'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFile(null)
+                      setPreviewUrl(null)
+                      setOcrResult(null)
+                      setEditableExtractedMeds([])
+                    }}
+                    style={{ flex: 1, background: '#f3f4f6', borderRadius: 14, fontWeight: 700 }}
+                  >
+                    Change Photo
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {ocrError && (
+              <div style={{ background: '#fee2e2', border: '1px solid #f87171', color: '#991b1b', borderRadius: 12, padding: 12, marginTop: 14, fontSize: '0.9rem' }}>
+                <AlertCircle size={18} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+                {ocrError}
+              </div>
+            )}
+
+            {/* Extracted Results & Missing Timing Warning */}
+            {ocrResult && (
+              <div style={{ marginTop: 20 }}>
+                {/* Critical Requirement: Warning banner when timing or info is missing */}
+                {ocrResult.has_missing_info && (
+                  <div className="missing-timing-banner">
+                    <AlertTriangle size={24} style={{ flexShrink: 0, marginTop: 2 }} />
+                    <div>
+                      <strong>⚠️ MISSING TIMING INFORMATION DETECTED</strong>
+                      <p>
+                        {ocrResult.missing_summary ||
+                          'The prescription does not specify when to take one or more medicines. Please enter the schedule (e.g. "morning after breakfast" or "twice daily") in the highlighted fields below before saving.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <h3 style={{ fontSize: '1.05rem', margin: '14px 0 10px', color: 'var(--ink)' }}>
+                  Extracted Medications ({editableExtractedMeds.length})
+                </h3>
+
+                {editableExtractedMeds.length === 0 ? (
+                  <p className="muted" style={{ fontStyle: 'italic' }}>
+                    No clear medications were detected. You can add them manually or try a clearer photo.
+                  </p>
+                ) : (
+                  <div style={{ display: 'grid', gap: 12, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
+                    {editableExtractedMeds.map((med, idx) => {
+                      const isTimingMissing = med.missing_fields?.includes('timing_text') || !med.timing_text.trim()
+                      return (
+                        <div key={idx} className={`ocr-medicine-card ${isTimingMissing ? 'has-missing' : ''}`}>
+                          <div className="ocr-med-header">
+                            <strong>Medication #{idx + 1}</strong>
+                            {isTimingMissing && (
+                              <span className="missing-tag">
+                                <AlertTriangle size={12} />
+                                Timing Missing
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="profile-form-grid" style={{ marginTop: 4 }}>
+                            <div className="form-field-group">
+                              <label>Medicine Name</label>
+                              <input
+                                required
+                                type="text"
+                                value={med.medicine_name}
+                                onChange={(e) => updateExtractedMed(idx, 'medicine_name', e.target.value)}
+                                placeholder="e.g. Metformin"
+                              />
+                            </div>
+                            <div className="form-field-group">
+                              <label>Dose / Strength</label>
+                              <input
+                                type="text"
+                                value={med.dose_text}
+                                onChange={(e) => updateExtractedMed(idx, 'dose_text', e.target.value)}
+                                placeholder="e.g. 500 mg"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="form-field-group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: isTimingMissing ? '#b45309' : 'inherit' }}>
+                              <span>Schedule / Timing {isTimingMissing && '(Required — Missing in Prescription)'}</span>
+                            </label>
+                            <input
+                              required
+                              type="text"
+                              className={isTimingMissing ? 'input-missing-highlight' : ''}
+                              value={med.timing_text}
+                              onChange={(e) => updateExtractedMed(idx, 'timing_text', e.target.value)}
+                              placeholder="e.g. Morning after breakfast, or Twice daily with meals"
+                            />
+                          </div>
+
+                          <div className="form-field-group">
+                            <label>Instructions (Optional)</label>
+                            <input
+                              type="text"
+                              value={med.instructions || ''}
+                              onChange={(e) => updateExtractedMed(idx, 'instructions', e.target.value)}
+                              placeholder="e.g. Take with a glass of water"
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {editableExtractedMeds.length > 0 && (
+                  <button
+                    className="primary-button"
+                    style={{ width: '100%', marginTop: 14 }}
+                    onClick={handleSaveAllExtracted}
+                    disabled={isSubmitting || ocrSaveSuccess}
+                  >
+                    {ocrSaveSuccess ? (
+                      <>
+                        <Check size={20} />
+                        <span>Saved to My Medications!</span>
+                      </>
+                    ) : isSubmitting ? (
+                      'Saving Medications...'
+                    ) : (
+                      <>
+                        <Check size={20} />
+                        <span>Save All to My Medications</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   AI Doctor Consultation & Email Approval Modal
+   Strict Requirement: Agent NEVER sends email automatically!
+   Always drafts clinical email, displays preview, and requires user consent.
+------------------------------------------------------------- */
+function DoctorConsultModal({
+  patientProfile,
+  role,
+  onClose,
+}: {
+  patientProfile: PatientProfile | null
+  role: 'patient' | 'caregiver'
+  onClose: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<'draft' | 'history'>('draft')
+  const [healthIssue, setHealthIssue] = useState('')
+  const [isDrafting, setIsDrafting] = useState(false)
+  const [activeDraft, setActiveDraft] = useState<DoctorEmailItem | null>(null)
+  const [isApproving, setIsApproving] = useState(false)
+  const [history, setHistory] = useState<DoctorEmailItem[]>([])
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
+
+  const doctorName = patientProfile?.doctor_name || 'Dr. Mitchell'
+  const doctorEmail = patientProfile?.doctor_email || 'dr.mitchell@clinic.com'
+  const patientEmail = patientProfile?.email || 'patient@gmail.com'
+
+  const loadHistory = async () => {
+    try {
+      const items = await getDoctorEmails()
+      setHistory(items)
+    } catch (e) {}
+  }
+
+  useEffect(() => {
+    loadHistory()
+  }, [])
+
+  // 1. Agent drafts email strictly as status='draft'
+  const handleDraftEmail = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!healthIssue.trim()) return
+    setIsDrafting(true)
+    setActionNotice(null)
+
+    try {
+      const draft = await draftDoctorEmail({
+        health_issue: healthIssue.trim(),
+        doctor_name: doctorName,
+        doctor_email: doctorEmail,
+      })
+      setActiveDraft(draft)
+      loadHistory()
+      speakText('I have drafted a concise clinical email for your doctor with your current health issue and prescription history. Please review the message below and tap approve to send.')
+    } catch (err: any) {
+      alert('Failed to draft doctor email. Please check network.')
+    } finally {
+      setIsDrafting(false)
+    }
+  }
+
+  // 2. Explicit User Consent: Patient/Caregiver clicks Approve & Send
+  const handleApprove = async () => {
+    if (!activeDraft) return
+    setIsApproving(true)
+    try {
+      const res = await approveDoctorEmail(activeDraft.id)
+      setActiveDraft(null)
+      setHealthIssue('')
+      setActionNotice(`✓ Success: Clinical email approved and dispatched to Dr. ${res.email_item.doctor_name} (${res.email_item.doctor_email}).`)
+      speakText(`Clinical email approved and dispatched to Dr. ${res.email_item.doctor_name}.`)
+      loadHistory()
+    } catch (err: any) {
+      alert('Failed to dispatch email. Please check doctor email settings.')
+    } finally {
+      setIsApproving(false)
+    }
+  }
+
+  // 3. User declines: Discard draft without sending
+  const handleDecline = async () => {
+    if (!activeDraft) return
+    if (!confirm('Discard this clinical email draft? Nothing will be sent to your doctor.')) return
+    try {
+      await declineDoctorEmail(activeDraft.id)
+      setActiveDraft(null)
+      setActionNotice('Draft email discarded. No message was sent to your doctor.')
+      speakText('Draft email discarded. No message was sent.')
+      loadHistory()
+    } catch (err) {}
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: 640 }}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">CLINICAL ASSISTANT</p>
+            <h2>Consult Doctor via Email</h2>
+          </div>
+          <button className="close-btn" onClick={onClose} aria-label="Close modal">
+            <X size={22} />
+          </button>
+        </div>
+
+        {/* Tab switch */}
+        <div className="ocr-mode-tabs">
+          <button
+            className={`ocr-mode-tab ${activeTab === 'draft' ? 'active' : ''}`}
+            onClick={() => setActiveTab('draft')}
+          >
+            <Mail size={18} />
+            <span>Draft Clinical Email</span>
+          </button>
+          <button
+            className={`ocr-mode-tab ${activeTab === 'history' ? 'active' : ''}`}
+            onClick={() => setActiveTab('history')}
+          >
+            <Clock size={18} />
+            <span>Communications History ({history.length})</span>
+          </button>
+        </div>
+
+        {activeTab === 'draft' && (
+          <div>
+            {/* Doctor info banner */}
+            <div style={{ background: '#f0f7f2', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--ink)' }}>Primary Doctor: {doctorName}</strong>
+                <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Recipient: {doctorEmail}</p>
+              </div>
+              <span className="email-status-badge sent">Verified Contact</span>
+            </div>
+
+            {actionNotice && (
+              <div style={{ background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: 12, borderRadius: 12, marginBottom: 14, fontSize: '0.9rem' }}>
+                {actionNotice}
+              </div>
+            )}
+
+            {!activeDraft ? (
+              <form onSubmit={handleDraftEmail}>
+                <label style={{ display: 'block', fontWeight: 700, fontSize: '0.88rem', marginBottom: 6 }}>
+                  Describe Your Current Health Issue or Symptoms
+                </label>
+                <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 8 }}>
+                  e.g., “I have severe pain in my chest and feel dizzy”, or “My blood pressure is higher than usual today”. The AI will draft a natural, professional clinical memo with your active medication list.
+                </p>
+
+                <textarea
+                  required
+                  rows={4}
+                  value={healthIssue}
+                  onChange={(e) => setHealthIssue(e.target.value)}
+                  placeholder="Describe how you are feeling or what immediate advice/medicine you need from the doctor..."
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1.5px solid var(--line)', fontSize: '0.95rem' }}
+                />
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                  <button
+                    type="submit"
+                    className="primary-button"
+                    style={{ flex: 1 }}
+                    disabled={isDrafting}
+                  >
+                    <Sparkles size={18} />
+                    <span>{isDrafting ? 'Drafting Clinical Email...' : 'Draft Clinical Email for Doctor'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* Review & Approval Stage (Strict User Consent) */
+              <div>
+                {/* Critical Approval Notice */}
+                <div className="email-consent-notice">
+                  <ShieldCheck size={20} style={{ flexShrink: 0 }} />
+                  <div>
+                    <strong>Approval Required Before Sending</strong>
+                    <div>The AI Agent will NEVER send this email automatically. Please review the details below and tap Approve when you are ready.</div>
+                  </div>
+                </div>
+
+                <div className="email-preview-container">
+                  <div className="email-preview-header">
+                    <div className="email-header-row">
+                      <strong>To:</strong>
+                      <span>{activeDraft.doctor_name} &lt;{activeDraft.doctor_email}&gt;</span>
+                    </div>
+                    <div className="email-header-row">
+                      <strong>From:</strong>
+                      <span>{patientProfile?.display_name || 'Patient'} &lt;{activeDraft.patient_email || patientEmail}&gt;</span>
+                    </div>
+                    <div className="email-header-row">
+                      <strong>Subject:</strong>
+                      <span style={{ fontWeight: 600 }}>{activeDraft.subject}</span>
+                    </div>
+                  </div>
+
+                  <div className="email-preview-body">
+                    {activeDraft.body}
+                  </div>
+                </div>
+
+                {/* Consent Action Buttons */}
+                <div className="email-action-row">
+                  <button
+                    className="btn-approve-email"
+                    onClick={handleApprove}
+                    disabled={isApproving}
+                  >
+                    <Check size={20} />
+                    <span>{isApproving ? 'Sending Email...' : '✓ Approve & Send to Doctor'}</span>
+                  </button>
+                  <button
+                    className="btn-decline-email"
+                    onClick={handleDecline}
+                    disabled={isApproving}
+                  >
+                    <X size={20} />
+                    <span>✕ Decline & Discard</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Communications History */}
+        {activeTab === 'history' && (
+          <div>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Record of all clinical emails drafted, approved, and sent to your doctor.
+            </p>
+
+            {history.length === 0 ? (
+              <p className="muted" style={{ fontStyle: 'italic', textAlign: 'center', padding: '24px 0' }}>
+                No doctor communications yet.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+                {history.map((item) => (
+                  <div key={item.id} style={{ background: '#ffffff', border: '1px solid var(--line)', borderRadius: 12, padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <div>
+                        <strong style={{ fontSize: '0.95rem' }}>{item.subject}</strong>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                          To: {item.doctor_name} ({item.doctor_email}) · {new Date(item.created_at).toLocaleDateString()} {new Date(item.created_at).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <span className={`email-status-badge ${item.status}`}>
+                        {item.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--ink)', lineBreak: 'anywhere' }}>
+                      <strong>Issue:</strong> {item.health_issue}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Patient Profile & Doctor Setup Modal
+   Configures personal Gmail and Primary Care Doctor info
+------------------------------------------------------------- */
+function PatientProfileModal({
+  profile,
+  onClose,
+}: {
+  profile: PatientProfile | null
+  onClose: () => void
+}) {
+  const [displayName, setDisplayName] = useState(profile?.display_name || 'Robert Jenkins')
+  const [email, setEmail] = useState(profile?.email || '')
+  const [doctorName, setDoctorName] = useState(profile?.doctor_name || 'Dr. Sarah Mitchell')
+  const [doctorEmail, setDoctorEmail] = useState(profile?.doctor_email || 'dr.mitchell@clinic.com')
+  const [doctorSpecialty, setDoctorSpecialty] = useState(profile?.doctor_specialty || 'General Practitioner')
+  const [doctorPhone, setDoctorPhone] = useState(profile?.doctor_phone || '')
+  const [isSaving, setIsSaving] = useState(false)
+  const [savedSuccess, setSavedSuccess] = useState(false)
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSaving(true)
+    try {
+      await updatePatientProfile({
+        display_name: displayName.trim(),
+        email: email.trim() || undefined,
+        doctor_name: doctorName.trim() || undefined,
+        doctor_email: doctorEmail.trim() || undefined,
+        doctor_specialty: doctorSpecialty.trim() || undefined,
+        doctor_phone: doctorPhone.trim() || undefined,
+      })
+      localStorage.setItem('patient_display_name', displayName.trim())
+      setSavedSuccess(true)
+      speakText('Profile and doctor settings saved.')
+      setTimeout(() => {
+        onClose()
+      }, 700)
+    } catch (err) {
+      alert('Failed to save profile. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: 560 }}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">ACCOUNT & CLINICAL DIRECTORY</p>
+            <h2>Patient Profile & Doctor Setup</h2>
+          </div>
+          <button className="close-btn" onClick={onClose} aria-label="Close modal">
+            <X size={22} />
+          </button>
+        </div>
+
+        <p className="muted" style={{ marginBottom: 14 }}>
+          Enter your personal email and your primary doctor's Gmail so the AI agent can draft clinical updates when you have symptoms.
+        </p>
+
+        <form onSubmit={handleSave}>
+          <div className="form-section-title">
+            <User size={18} />
+            <span>Personal Information</span>
+          </div>
+
+          <div className="profile-form-grid">
+            <div className="form-field-group">
+              <label>Patient Full Name</label>
+              <input
+                required
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g. Robert Jenkins"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Personal Gmail / Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="robert.jenkins@gmail.com"
+              />
+            </div>
+          </div>
+
+          <div className="form-section-title">
+            <Stethoscope size={18} />
+            <span>Primary Care Doctor</span>
+          </div>
+
+          <div className="profile-form-grid">
+            <div className="form-field-group">
+              <label>Doctor's Name</label>
+              <input
+                required
+                type="text"
+                value={doctorName}
+                onChange={(e) => setDoctorName(e.target.value)}
+                placeholder="e.g. Dr. Sarah Mitchell"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Doctor's Gmail Address</label>
+              <input
+                required
+                type="email"
+                value={doctorEmail}
+                onChange={(e) => setDoctorEmail(e.target.value)}
+                placeholder="dr.mitchell@gmail.com"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Specialty</label>
+              <input
+                type="text"
+                value={doctorSpecialty}
+                onChange={(e) => setDoctorSpecialty(e.target.value)}
+                placeholder="e.g. Cardiologist, GP"
+              />
+            </div>
+            <div className="form-field-group">
+              <label>Clinic Phone (Optional)</label>
+              <input
+                type="tel"
+                value={doctorPhone}
+                onChange={(e) => setDoctorPhone(e.target.value)}
+                placeholder="e.g. +1 (555) 234-5678"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
+            <button
+              type="submit"
+              disabled={isSaving}
+              style={{
+                flex: 1,
+                minHeight: 48,
+                background: savedSuccess ? '#15803d' : 'var(--green)',
+                color: '#fff',
+                borderRadius: 14,
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              }}
+            >
+              {savedSuccess ? (
+                <>
+                  <Check size={18} /> Saved Successfully
+                </>
+              ) : isSaving ? (
+                'Saving Profile...'
+              ) : (
+                'Save Profile & Settings'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                minHeight: 48,
+                background: '#f3f4f6',
+                color: '#374151',
+                borderRadius: 14,
+                padding: '0 20px',
+                fontWeight: 700,
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Professional Startup Splash Loading Screen
+------------------------------------------------------------- */
+function SplashScreen() {
+  return (
+    <div className="splash-screen" role="dialog" aria-modal="true" aria-label="Starting health companion">
+      <div className="splash-logo-container">
+        <div className="splash-pulse-ring" />
+        <div className="splash-logo-circle">
+          <HeartPulse size={44} strokeWidth={2.2} />
+        </div>
+      </div>
+      <div className="splash-title">Sehat Saathi</div>
+      <div className="splash-subtitle">Your Gentle Health Companion</div>
+      <div className="splash-progress-track">
+        <div className="splash-progress-bar" />
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Caregiver Screen (UX-35 to UX-38, UX-43, UX-44)
+------------------------------------------------------------- */
+function CaregiverScreen({
+  onSwitchToPatient,
+  patientProfile,
+  activeEmergencyAlert,
+  setActiveEmergencyAlert,
+  onTriggerSiren,
+  onSilenceSiren,
+  onMarkHandled,
+  onDoctorClick,
+  onProfileClick,
+}: {
+  onSwitchToPatient: () => void
+  patientProfile?: PatientProfile | null
+  activeEmergencyAlert: { id: number; transcript: string; created_at: string } | null
+  setActiveEmergencyAlert: (alert: any) => void
+  onTriggerSiren: (alert: any) => void
+  onSilenceSiren: () => void
+  onMarkHandled: (id: number) => void
+  onDoctorClick?: () => void
+  onProfileClick?: () => void
+}) {
+  const [token, setToken] = useState<string>(() => getCaregiverToken())
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
+  const [showRxModal, setShowRxModal] = useState(false)
+
+  // Pairing Entry State
+  const [pairKey, setPairKey] = useState('')
+  const [caregiverName, setCaregiverName] = useState('Sarah Khan')
+  const [pendingId, setPendingId] = useState<number | null>(null)
+  const [pairStatusMsg, setPairStatusMsg] = useState('')
+  const [isRedeeming, setIsRedeeming] = useState(false)
+
+  // Clinician Note State
+  const [clinicianNotes, setClinicianNotes] = useState<Record<number, string>>({})
+
+  // Load Dashboard Data
+  const loadDashboard = async () => {
+    try {
+      const data = await getCaregiverDashboard()
+      setDashboard(data)
+    } catch (err: any) {
+      if (err.message === 'REVOKED') {
+        setToken('')
+        alert('Your connection to the patient has been revoked.')
+      }
+    }
+  }
+
+  // Periodic Polling
+  useEffect(() => {
+    if (!token) return
+    loadDashboard()
+    const interval = setInterval(loadDashboard, 5000)
+    return () => clearInterval(interval)
+  }, [token])
+
+  // Real-Time Server-Sent Events (SSE) Stream
+  useEffect(() => {
+    if (!token) return
+
+    const eventSource = new EventSource(`${API_BASE}/api/caregiver/events?token=${token}`)
+
+    const handleEmergencyAlert = (raw: any) => {
+      const alertData = {
+        id: raw.alert_id || raw.id,
+        transcript: raw.transcript_excerpt || raw.transcript || 'Emergency reported',
+        created_at: raw.timestamp || new Date().toISOString(),
+      }
+      onTriggerSiren(alertData)
+      speakText(`Emergency alert from patient! Patient reported: ${alertData.transcript}`)
+      loadDashboard()
+    }
+
+    eventSource.addEventListener('emergency_buzzer', (e) => {
+      try {
+        const raw = JSON.parse(e.data)
+        handleEmergencyAlert(raw)
+      } catch (err) {
+        console.error('Failed to parse emergency buzzer event:', err)
+      }
+    })
+
+    // Also handle fallback message events
+    eventSource.onmessage = (e) => {
+      try {
+        const raw = JSON.parse(e.data)
+        if (raw.event === 'emergency_buzzer' || raw.data?.alert_type === 'RED_FLAG' || raw.alert_type === 'RED_FLAG') {
+          handleEmergencyAlert(raw.data || raw)
+        }
+      } catch (err) {}
+    }
+
+    eventSource.addEventListener('prescription_updated', () => {
+      loadDashboard()
+    })
+
+    eventSource.onerror = () => {
+      // EventSource auto reconnects
+    }
+
+    return () => {
+      eventSource.close()
+    }
+  }, [token])
+
+  // Caregiver Key Submit (UX-43)
+  const handleRedeemKey = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!pairKey.trim() || !caregiverName.trim()) return
+
+    setIsRedeeming(true)
+    setPairStatusMsg('Submitting key...')
+    try {
+      const res = await redeemPairingKey(pairKey.trim(), caregiverName.trim())
+      setPendingId(res.pending_id)
+      setPairStatusMsg('Waiting for patient to approve on their phone...')
+    } catch (err: any) {
+      setPairStatusMsg(err.message || 'Key is incorrect or expired.')
+    } finally {
+      setIsRedeeming(false)
+    }
+  }
+
+  // Poll for Approval Status
+  useEffect(() => {
+    if (!pendingId) return
+    const poll = setInterval(async () => {
+      try {
+        const res = await checkPairStatus(pendingId)
+        if (res.status === 'approved' && res.session_token) {
+          clearInterval(poll)
+          setCaregiverToken(res.session_token)
+          setToken(res.session_token)
+          setPendingId(null)
+          setPairStatusMsg('')
+        } else if (res.status === 'declined') {
+          clearInterval(poll)
+          setPendingId(null)
+          setPairStatusMsg('Patient declined the link request.')
+        }
+      } catch (e) {}
+    }, 2000)
+    return () => clearInterval(poll)
+  }, [pendingId])
+
+  // Submit Clinician Note (UX-37)
+  const handleSubmitNote = async (reviewId: number) => {
+    const note = clinicianNotes[reviewId]
+    if (!note || !note.trim()) return
+    await addClinicianNote(reviewId, note.trim())
+    setClinicianNotes((prev) => ({ ...prev, [reviewId]: '' }))
+    loadDashboard()
+  }
+
+  // 1. Caregiver Key Entry Screen (UX-43)
+  if (!token) {
+    return (
+      <main className="center-page">
+        <div className="brand" style={{ marginBottom: 20 }}>
+          <span className="brand-mark"><HeartPulse size={22} /></span>
+          <span>Sehat Saathi · Caregiver Portal</span>
+        </div>
+        <h1>Connect with Patient</h1>
+        <p className="muted" style={{ maxWidth: 460, marginTop: 10 }}>
+          Enter your name and the 8-character pairing code displayed on the patient’s screen.
+        </p>
+
+        <form onSubmit={handleRedeemKey} style={{ width: '100%', maxWidth: 440, marginTop: 24, display: 'grid', gap: 14 }}>
+          <label style={{ textAlign: 'left', fontWeight: 700, fontSize: '0.85rem' }}>
+            Your Name
+            <input
+              required
+              type="text"
+              placeholder="e.g. Sarah Khan"
+              value={caregiverName}
+              onChange={(e) => setCaregiverName(e.target.value)}
+              style={{ width: '100%', minHeight: 56, marginTop: 6, padding: '12px 16px', borderRadius: 14, border: '2px solid var(--line)' }}
+            />
+          </label>
+
+          <label style={{ textAlign: 'left', fontWeight: 700, fontSize: '0.85rem' }}>
+            8-Character Pairing Code
+            <input
+              required
+              type="text"
+              maxLength={9}
+              placeholder="e.g. A3F9-7C21"
+              value={pairKey}
+              onChange={(e) => setPairKey(e.target.value.toUpperCase())}
+              style={{ width: '100%', minHeight: 56, marginTop: 6, padding: '12px 16px', borderRadius: 14, border: '2px solid var(--line)', fontFamily: 'monospace', fontSize: '1.2rem', textAlign: 'center' }}
+            />
+          </label>
+
+          {pairStatusMsg && (
+            <p style={{ color: pendingId ? 'var(--green-dark)' : 'var(--crimson)', fontWeight: 700, fontSize: '0.9rem' }}>
+              {pairStatusMsg}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={isRedeeming || pendingId !== null}
+            className="primary-button"
+            style={{ marginTop: 10 }}
+          >
+            {isRedeeming ? 'Connecting...' : 'Link to Patient'}
+          </button>
+
+          <button
+            type="button"
+            onClick={onSwitchToPatient}
+            style={{ background: 'transparent', color: 'var(--muted)', marginTop: 10, fontWeight: 700 }}
+          >
+            Switch to Patient Mode
+          </button>
+        </form>
+      </main>
+    )
+  }
+
+  // 2. Caregiver Dashboard View (UX-35 to UX-38)
+  return (
+    <main className="page">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark"><HeartPulse size={22} /></span>
+          <span>Sehat Saathi · Caregiver</span>
+        </div>
+        <div className="header-actions">
+          <button className="icon-button" onClick={() => setShowRxModal(true)} aria-label="Prescriptions">
+            <Pill size={18} />
+            <span>Prescriptions</span>
+          </button>
+          {onDoctorClick && (
+            <button className="icon-button" onClick={onDoctorClick} aria-label="Consult Doctor">
+              <Mail size={18} />
+              <span>Doctor</span>
+            </button>
+          )}
+          {onProfileClick && (
+            <button className="icon-button" onClick={onProfileClick} aria-label="Settings">
+              <User size={18} />
+              <span>Settings</span>
+            </button>
+          )}
+          <button className="icon-button" onClick={onSwitchToPatient} aria-label="Switch to Patient Mode">
+            <HeartPulse size={18} />
+            <span>Patient</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Real-time Emergency Siren Takeover Banner */}
+      {activeEmergencyAlert && (
+        <div className="siren-takeover">
+          <h2>
+            <AlertTriangle size={28} />
+            <span>EMERGENCY ALERT: Heart / Red-Flag Detected!</span>
+          </h2>
+          <p style={{ marginTop: 8, fontSize: '1.05rem', color: '#fee2e2' }}>
+            Patient words: <strong>“{activeEmergencyAlert.transcript}”</strong>
+          </p>
+          <div className="siren-actions">
+            <button className="btn-silence" onClick={onSilenceSiren}>
+              <VolumeX size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+              Silence Siren
+            </button>
+            <button className="btn-handled" onClick={() => onMarkHandled(activeEmergencyAlert.id)}>
+              <Check size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+              Mark as Handled
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Patient Overview Hero (UX-35) */}
+      <section className="caregiver-hero">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <p className="eyebrow">MONITORING PATIENT</p>
+            <h1 style={{ fontSize: '1.8rem' }}>{dashboard?.summary.patient_display_name || 'Robert Jenkins'}</h1>
+          </div>
+          <div className="status-pill">
+            <span className="status-dot-inner" />
+            <span>Live Stream Active</span>
+          </div>
+        </div>
+
+        {/* Doctor Contact Chip */}
+        {patientProfile?.doctor_name && (
+          <div style={{ marginTop: 12, padding: '8px 14px', background: '#ffffff', borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', border: '1px solid var(--line)' }}>
+            <Stethoscope size={16} color="var(--green)" />
+            <span>Primary Doctor: <strong>{patientProfile.doctor_name}</strong> ({patientProfile.doctor_email || 'dr.mitchell@clinic.com'})</span>
+            {onDoctorClick && (
+              <button
+                onClick={onDoctorClick}
+                style={{ marginLeft: 8, color: 'var(--green-dark)', fontWeight: 700, background: '#f0f7f2', padding: '4px 10px', borderRadius: 8 }}
+              >
+                Draft Email &rarr;
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Stats Grid */}
+        <div className="stats-grid">
+          <div className="stat-card alert-stat">
+            <strong>{dashboard?.summary.open_alerts_count || 0}</strong>
+            <small>Open Alerts</small>
+          </div>
+          <div className="stat-card">
+            <strong>{dashboard?.summary.reminders_taken_today || 0}</strong>
+            <small>Pills Taken Today</small>
+          </div>
+          <div className="stat-card">
+            <strong>{dashboard?.summary.reminders_missed_today || 0}</strong>
+            <small>Pills Missed</small>
+          </div>
+          <div className="stat-card">
+            <strong>{dashboard?.summary.review_items_count || 0}</strong>
+            <small>Clinician Review</small>
+          </div>
+        </div>
+      </section>
+
+      {/* High-Priority Emergency Alerts Section (UX-36) */}
+      <div className="section-title">
+        <h2>Emergency & Red-Flag Alerts</h2>
+      </div>
+      {(!dashboard?.alerts || dashboard.alerts.length === 0) ? (
+        <p className="muted" style={{ fontStyle: 'italic', marginBottom: 20 }}>No unhandled emergency alerts.</p>
+      ) : (
+        dashboard.alerts.map((alert) => (
+          <div key={alert.id} className="alert-card-caregiver">
+            <div className="time">Alert #{alert.id} · {new Date(alert.created_at).toLocaleTimeString()}</div>
+            <div className="words">“{alert.transcript_excerpt}”</div>
+            <p style={{ fontSize: '0.85rem', color: '#991b1b' }}>Action: {alert.action_taken}</p>
+            <button
+              onClick={() => onMarkHandled(alert.id)}
+              style={{ marginTop: 12, minHeight: 44, padding: '8px 16px', background: 'var(--green)', color: '#fff', borderRadius: 10, fontWeight: 700 }}
+            >
+              ✓ Mark Handled
+            </button>
+          </div>
+        ))
+      )}
+
+      {/* Clinician Review Queue (UX-37) */}
+      <div className="section-title">
+        <h2>Clinician Review Queue</h2>
+      </div>
+      {(!dashboard?.review_queue || dashboard.review_queue.length === 0) ? (
+        <p className="muted" style={{ fontStyle: 'italic', marginBottom: 20 }}>Review queue is clear.</p>
+      ) : (
+        dashboard.review_queue.map((item) => (
+          <div key={item.id} className="source-card">
+            <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Patient asked: “{item.question}”</strong>
+            <p style={{ margin: '8px 0', fontSize: '0.85rem', color: 'var(--muted)' }}>Reason: {item.reason}</p>
+            {item.clinician_note ? (
+              <div style={{ background: '#eef7ed', padding: 10, borderRadius: 10, fontSize: '0.85rem' }}>
+                <strong>Clinician Note:</strong> {item.clinician_note}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <input
+                  type="text"
+                  placeholder="Add clinician note or advice..."
+                  value={clinicianNotes[item.id] || ''}
+                  onChange={(e) => setClinicianNotes({ ...clinicianNotes, [item.id]: e.target.value })}
+                  style={{ flex: 1, minHeight: 46, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--line)' }}
+                />
+                <button
+                  onClick={() => handleSubmitNote(item.id)}
+                  style={{ minHeight: 46, padding: '8px 14px', background: 'var(--green)', color: '#fff', borderRadius: 10, fontWeight: 700 }}
+                >
+                  Submit
+                </button>
+              </div>
+            )}
+          </div>
+        ))
+      )}
+
+      {/* Medication & Reminders Schedule */}
+      <div className="section-title">
+        <h2>Active Reminders</h2>
+        <button
+          onClick={() => setShowRxModal(true)}
+          style={{ minHeight: 44, padding: '6px 14px', background: '#eef7ed', color: 'var(--green-dark)', borderRadius: 10, fontWeight: 700 }}
+        >
+          + Add Prescription
+        </button>
+      </div>
+      {(!dashboard?.reminders || dashboard.reminders.length === 0) ? (
+        <p className="muted" style={{ fontStyle: 'italic', marginBottom: 20 }}>No active medication reminders.</p>
+      ) : (
+        dashboard.reminders.map((rem) => (
+          <div key={rem.id} className="rx-card">
+            <div>
+              <strong>{rem.medicine_name} <span className="rx-dose-tag">{rem.dose_text}</span></strong>
+              <p>{rem.timing_text}</p>
+            </div>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--green)' }}>Active</span>
+          </div>
+        ))
+      )}
+
+      {/* Upcoming Appointments */}
+      <div className="section-title">
+        <h2>Next Appointments</h2>
+      </div>
+      {(!dashboard?.appointments || dashboard.appointments.length === 0) ? (
+        <p className="muted" style={{ fontStyle: 'italic', marginBottom: 20 }}>No scheduled appointments.</p>
+      ) : (
+        dashboard.appointments.map((app) => (
+          <div key={app.id} className="rx-card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Calendar size={22} color="var(--green)" />
+              <div>
+                <strong>Clinic Visit</strong>
+                <p>{app.slot_start}</p>
+              </div>
+            </div>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--green)' }}>Confirmed</span>
+          </div>
+        ))
+      )}
+
+      {/* Prescription Management Modal for Caregiver */}
+      {showRxModal && (
+        <PrescriptionsModal
+          role="caregiver"
+          onClose={() => {
+            setShowRxModal(false)
+            loadDashboard()
+          }}
+        />
+      )}
+    </main>
+  )
+}
+
+/* -------------------------------------------------------------
+   Agent Conversation Memory & Awareness Modal
+------------------------------------------------------------- */
+function MemoryModal({
+  onClose,
+  onTestQuery
+}: {
+  onClose: () => void
+  onTestQuery: (q: string) => void
+}) {
+  const [memories, setMemories] = useState<PatientMemoryItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const data = await getPatientMemories(10)
+      setMemories(data)
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ background: '#e0f2fe', color: '#0369a1', padding: 8, borderRadius: 12, display: 'flex' }}>
+              <Brain size={24} />
+            </span>
+            <div>
+              <h3>Agent Memory & Awareness</h3>
+              <p className="muted" style={{ fontSize: '0.85rem' }}>
+                Context retained from prior conversations and medication intake
+              </p>
+            </div>
+          </div>
+          <button className="close-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div style={{ margin: '14px 0', padding: '12px 16px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#475569' }}>
+          💡 <strong>How Memory Works:</strong> Sehat Saathi remembers your questions, reported symptoms, and logged medication times. When you ask follow-ups like <em>"Did I take my medicine?"</em> or <em>"What did we discuss earlier?"</em>, the agent uses this persistent context.
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <strong style={{ fontSize: '0.9rem', color: '#1e293b' }}>Quick Memory Recall Tests:</strong>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            <button
+              onClick={() => { onClose(); onTestQuery('Did I take my medicine?'); }}
+              style={{ padding: '6px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, fontSize: '0.85rem', fontWeight: 600, color: '#166534', cursor: 'pointer' }}
+            >
+              "Did I take my medicine?"
+            </button>
+            <button
+              onClick={() => { onClose(); onTestQuery('What did we talk about?'); }}
+              style={{ padding: '6px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, fontSize: '0.85rem', fontWeight: 600, color: '#1e40af', cursor: 'pointer' }}
+            >
+              "What did we talk about?"
+            </button>
+          </div>
+        </div>
+
+        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+          {loading ? (
+            <p className="muted" style={{ textAlign: 'center', padding: 20 }}>Loading agent memories...</p>
+          ) : memories.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 30, color: '#64748b' }}>
+              <Brain size={36} style={{ margin: '0 auto 10px', opacity: 0.5 }} />
+              <p>No conversation memories recorded yet.</p>
+              <p style={{ fontSize: '0.8rem' }}>Ask a question or log a medication intake to start building memory!</p>
+            </div>
+          ) : (
+            memories.map((m, idx) => (
+              <div
+                key={m.id || idx}
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 12,
+                  padding: 12,
+                  marginBottom: 10,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    padding: '2px 8px',
+                    borderRadius: 6,
+                    background: m.intent === 'adherence' ? '#dcfce7' : m.intent === 'emergency' ? '#fee2e2' : '#f1f5f9',
+                    color: m.intent === 'adherence' ? '#15803d' : m.intent === 'emergency' ? '#b91c1c' : '#475569'
+                  }}>
+                    {m.intent}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ''}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>
+                  👤 “{m.user_query}”
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#334155', background: '#f8fafc', padding: 8, borderRadius: 8 }}>
+                  🤖 {m.assistant_response}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="modal-actions" style={{ marginTop: 16 }}>
+          <button className="primary-btn" onClick={onClose} style={{ width: '100%' }}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------
+   Persistent Accessibility Bar (UX-02, UX-04)
+------------------------------------------------------------- */
+function AccessibilityBar({
+  textSize,
+  setTextSize,
+  highContrast,
+  setHighContrast,
+  currentScreen,
+  onSwitchRole,
+}: {
+  textSize: TextSize
+  setTextSize: (size: TextSize) => void
+  highContrast: boolean
+  setHighContrast: (v: boolean) => void
+  currentScreen: Screen
+  onSwitchRole: () => void
+}) {
+  const cycleTextSize = () => {
+    if (textSize === 'normal') setTextSize('large')
+    else if (textSize === 'large') setTextSize('extra')
+    else setTextSize('normal')
+  }
+
+  return (
+    <nav className="accessibility-bar" aria-label="Accessibility settings">
+      <button onClick={cycleTextSize} aria-label={`Current text size: ${textSize}. Tap to enlarge.`}>
+        <span style={{ fontSize: '0.9rem', fontWeight: 700 }}>A</span>
+        <span style={{ fontSize: '1.15rem', fontWeight: 800 }}>A+</span>
+        <span style={{ fontSize: '0.75rem', marginLeft: 4 }}>({textSize})</span>
+      </button>
+
+      <button
+        className={highContrast ? 'selected' : ''}
+        onClick={() => setHighContrast(!highContrast)}
+        aria-label="Toggle high contrast mode"
+      >
+        <Settings size={16} />
+        <span>Contrast</span>
+      </button>
+
+      <button onClick={onSwitchRole} aria-label="Switch between patient and caregiver mode">
+        <Users size={16} />
+        <span>{currentScreen === 'caregiver' ? 'Patient' : 'Caregiver'}</span>
+      </button>
+    </nav>
+  )
+}

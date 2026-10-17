@@ -1,0 +1,56 @@
+{
+  "red_flags": [
+    {
+      "category": "chest_pain",
+      "severity": "CRITICAL",
+      "description": "Chest pain, pressure, or heart attack symptoms",
+      "patterns": [
+        "chest pain", "pain in chest", "chest pressure", "tightness in chest",
+        "heart attack", "crushing chest pain", "pain radiating to arm",
+        "pain in my heart", "pain in heart", "heart pain", "heart hurts", "severe chest ache", "sharp chest pain",
+        "chest hurts", "chest hurt", "heavy pressure"
+      ]
+    },
+    {
+      "category": "breathlessness",
+      "severity": "CRITICAL",
+      "description": "Severe shortness of breath or choking",
+      "patterns": [
+        "short of breath", "shortness of breath", "cannot breathe", "can't breathe",
+        "difficulty breathing", "trouble breathing", "gasping for air", "breathless",
+        "choking", "suffocating", "severe breathlessness"
+      ]
+    },
+    {
+      "category": "fainting",
+      "severity": "CRITICAL",
+      "description": "Fainting, collapse, or loss of consciousness",
+      "patterns": [
+        "fainted", "fainting", "passed out", "blacked out", "lost consciousness",
+        "unconscious", "collapsing", "collapsed", "severe dizziness and falling"
+      ]
+    },
+    {
+      "category": "severe_bleeding",
+      "severity": "CRITICAL",
+      "description": "Severe or uncontrollable bleeding",
+      "patterns": [
+        "severe bleeding", "heavy bleeding", "bleeding profusely", "blood gushing",
+        "blood is gushing", "gushing", "bleeding heavily",
+        "bleeding won't stop", "bleeding will not stop", "coughing up blood",
+        "vomiting blood", "deep wound bleeding"
+      ]
+    },
+    {
+      "category": "sudden_weakness",
+      "severity": "CRITICAL",
+      "description": "Stroke signs, paralysis, sudden weakness or numbness",
+      "patterns": [
+        "stroke", "sudden weakness", "sudden numbness", "facial drooping",
+        "face drooping", "face is drooping", "arm weakness", "paralysis",
+        "cannot move my arm", "cannot move leg", "slurred speech", "sudden loss of balance",
+        "arm is numb"
+      ]
+    }
+  ]
+}
