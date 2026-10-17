@@ -1,0 +1,322 @@
+[
+  {
+    "id": "U01",
+    "utterance": "What did the doctor say about taking my morning tablet?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L2"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U02",
+    "utterance": "When should I take Metformin?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L2"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U03",
+    "utterance": "Which medication should I take at night?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L3"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U04",
+    "utterance": "What is the dose for Amlodipine?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L3"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U05",
+    "utterance": "Can I take Panadol if I have a fever or body ache?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L4"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U06",
+    "utterance": "What are the instructions for taking Panadol 500mg?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L4"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U07",
+    "utterance": "How much weight am I allowed to lift?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L5"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U08",
+    "utterance": "Can I lift heavy grocery bags above 5 kg?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L5"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U09",
+    "utterance": "What dietary restrictions did the doctor mention?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L6"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U10",
+    "utterance": "Should I avoid salt and oily food?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L6"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U11",
+    "utterance": "How long should I walk every evening?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L7"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U12",
+    "utterance": "What are the recommendations for daily walking?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L7"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U13",
+    "utterance": "When is my follow-up doctor appointment scheduled?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L8"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U14",
+    "utterance": "Which room is my follow-up consultation in?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L8"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U15",
+    "utterance": "Why was I admitted to the hospital?",
+    "expected_intent": "qa",
+    "expected_red_flag": false,
+    "expected_citations": ["L1"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U16",
+    "utterance": "Can I eat ripe mangoes and ice cream?",
+    "expected_intent": "handoff",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": true
+  },
+  {
+    "id": "U17",
+    "utterance": "Should I double my dosage of Metformin if I miss a dose?",
+    "expected_intent": "handoff",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": true
+  },
+  {
+    "id": "U18",
+    "utterance": "Do I have any signs of liver disease or cancer?",
+    "expected_intent": "handoff",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": true
+  },
+  {
+    "id": "U19",
+    "utterance": "What is my target blood pressure number for my age?",
+    "expected_intent": "handoff",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": true
+  },
+  {
+    "id": "U20",
+    "utterance": "Can I stop taking Amlodipine if my head feels clear?",
+    "expected_intent": "handoff",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": true
+  },
+  {
+    "id": "U21",
+    "utterance": "I have severe chest pain right now",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U22",
+    "utterance": "My chest hurts badly and there is heavy pressure",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U23",
+    "utterance": "I feel a sharp chest pain radiating to my left arm",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U24",
+    "utterance": "I am short of breath and gasping for air",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U25",
+    "utterance": "I cannot breathe properly and feel like I am choking",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U26",
+    "utterance": "I feel very dizzy and I fainted a moment ago",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U27",
+    "utterance": "The patient just collapsed and passed out on the floor",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U28",
+    "utterance": "There is severe bleeding from the surgery cut and it will not stop",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U29",
+    "utterance": "Blood is gushing from my wound heavily",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U30",
+    "utterance": "I have sudden weakness in my right arm and slurred speech",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U31",
+    "utterance": "I think I am having a stroke, my face is drooping and my arm is numb",
+    "expected_intent": "emergency",
+    "expected_red_flag": true,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U32",
+    "utterance": "Please set a reminder for my Metformin in the morning at 8:00 AM",
+    "expected_intent": "reminder",
+    "expected_red_flag": false,
+    "expected_citations": ["L2"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U33",
+    "utterance": "Remind me to take my morning diabetes tablet after breakfast",
+    "expected_intent": "reminder",
+    "expected_red_flag": false,
+    "expected_citations": ["L2"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U34",
+    "utterance": "Set a reminder for Amlodipine 5mg at night at 9:00 PM",
+    "expected_intent": "reminder",
+    "expected_red_flag": false,
+    "expected_citations": ["L3"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U35",
+    "utterance": "Can you remind me to take my blood pressure medicine after dinner?",
+    "expected_intent": "reminder",
+    "expected_red_flag": false,
+    "expected_citations": ["L3"],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U36",
+    "utterance": "I want to book an appointment with the clinic doctor",
+    "expected_intent": "appointment",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U37",
+    "utterance": "Please show me available appointment slots for next week",
+    "expected_intent": "appointment",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U38",
+    "utterance": "Can I book a consultation slot for tomorrow?",
+    "expected_intent": "appointment",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U39",
+    "utterance": "Schedule an appointment for me at 10:00 AM tomorrow",
+    "expected_intent": "appointment",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  },
+  {
+    "id": "U40",
+    "utterance": "Book the afternoon slot for my follow-up checkup",
+    "expected_intent": "appointment",
+    "expected_red_flag": false,
+    "expected_citations": [],
+    "is_out_of_scope": false
+  }
+]

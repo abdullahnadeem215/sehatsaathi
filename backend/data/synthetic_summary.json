@@ -1,0 +1,46 @@
+{
+  "summaries": [
+    {
+      "id": "summary-synth-01",
+      "patient_id": "default-patient",
+      "title": "Hospital Discharge Summary - Cardiology & Diabetes Clinic",
+      "hospital": "City General Hospital",
+      "discharge_date": "2026-10-12",
+      "follow_up_date": "2026-10-26",
+      "lines": [
+        {
+          "line_id": "L1",
+          "text": "Patient was admitted for Type 2 Diabetes management and mild hypertension."
+        },
+        {
+          "line_id": "L2",
+          "text": "Take Tablet Metformin 500mg once daily in the morning after breakfast."
+        },
+        {
+          "line_id": "L3",
+          "text": "Take Tablet Amlodipine 5mg once daily at night after dinner."
+        },
+        {
+          "line_id": "L4",
+          "text": "Take Tablet Panadol 500mg as needed for body ache or fever, not exceeding two tablets per day."
+        },
+        {
+          "line_id": "L5",
+          "text": "Avoid lifting heavy weights above 5 kg for the next two weeks."
+        },
+        {
+          "line_id": "L6",
+          "text": "Keep salt intake low and avoid oily fried foods."
+        },
+        {
+          "line_id": "L7",
+          "text": "Walk lightly for 15 to 20 minutes daily in the evening."
+        },
+        {
+          "line_id": "L8",
+          "text": "Follow-up consultation is scheduled on 26 October 2026 at 10:00 AM in Room 14."
+        }
+      ]
+    }
+  ]
+}
