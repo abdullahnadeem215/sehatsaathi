@@ -4,6 +4,7 @@ import {
   Mic, PhoneCall, Play, RotateCcw, Send, Settings, ShieldCheck,
   Users, Volume2, VolumeX, X, Zap, AlertTriangle, Pill, Plus, Trash2,
   Calendar, CheckCircle2, Clock, Upload, Camera, FileText, Mail, User,
+  Home, ClipboardList,
   Stethoscope, AlertCircle, RefreshCw, History, QrCode, ExternalLink, Copy
 } from 'lucide-react'
 import QRCode from 'qrcode'
@@ -40,7 +41,6 @@ import {
   revokeCaregiverLink,
   getCaregiverDashboard,
   markAlertHandled,
-  addClinicianNote,
   getPrescriptions,
   createPrescription,
   deletePrescription,
@@ -65,7 +65,7 @@ import {
   audioRecorder
 } from './utils/audio'
 
-type Screen = 'signup' | 'role' | 'home' | 'answer' | 'emergency' | 'caregiver'
+type Screen = 'signup' | 'role' | 'home' | 'reminder' | 'answer' | 'emergency' | 'caregiver'
 type TextSize = 'normal' | 'large' | 'extra'
 
 const textSizes: Record<TextSize, string> = {
@@ -114,6 +114,7 @@ export default function App() {
   const [holdingMessage, setHoldingMessage] = useState('')
   const [linkedCaregiversCount, setLinkedCaregiversCount] = useState(0)
   const [nextMedicine, setNextMedicine] = useState<string>('')
+  const [reminders, setReminders] = useState<any[]>([])
 
   // Caregiver Live Siren / Emergency state
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState<{ id: number; transcript: string; created_at: string } | null>(null)
@@ -240,6 +241,7 @@ export default function App() {
       const links = await getLinkedCaregivers()
       setLinkedCaregiversCount(links.filter((l) => l.is_active).length)
       const reminders = await getReminders()
+      setReminders(Array.isArray(reminders) ? reminders : [])
       if (reminders && reminders.length > 0) {
         const rem = reminders[0]
         setNextMedicine(`${rem.medicine_name} ${rem.dose_text} · ${rem.timing_text}`)
@@ -400,6 +402,25 @@ export default function App() {
           onProfileClick={() => setShowProfileModal(true)}
           onMemoryClick={() => setShowMemoryModal(true)}
           onRoleSwitch={() => setScreen('role')}
+          onReminderClick={() => setScreen('reminder')}
+        />
+      )}
+
+      {screen === 'reminder' && (
+        <ReminderScreen
+          nextMedicine={nextMedicine}
+          dueReminder={dueReminder}
+          reminders={reminders}
+          dismissedDueReminderId={dismissedDueReminderId}
+          linkedCaregiversCount={linkedCaregiversCount}
+          onBack={() => setScreen('home')}
+          onTakeMedicine={handleTakeMedicineFromBanner}
+          onSnooze={(reminderId) => setDismissedDueReminderId(reminderId)}
+          onEmergencyClick={() => setScreen('emergency')}
+          onPrescriptionsClick={() => setShowPrescriptionModal(true)}
+          onHomeClick={() => setScreen('home')}
+          onVisitsClick={() => setShowDoctorModal(true)}
+          onRecordsClick={() => setShowMemoryModal(true)}
         />
       )}
 
@@ -544,11 +565,6 @@ function SignupScreen({
   const [age, setAge] = useState('')
   const [emergencyContact, setEmergencyContact] = useState('')
 
-  const [doctorName, setDoctorName] = useState('')
-  const [doctorEmail, setDoctorEmail] = useState('')
-  const [doctorSpecialty, setDoctorSpecialty] = useState('')
-  const [doctorPhone, setDoctorPhone] = useState('')
-
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
@@ -569,10 +585,6 @@ function SignupScreen({
         phone: phone.trim() || undefined,
         age: age.trim() ? parseInt(age.trim(), 10) : undefined,
         emergency_contact_name: emergencyContact.trim() || undefined,
-        doctor_name: doctorName.trim() || undefined,
-        doctor_email: doctorEmail.trim() || undefined,
-        doctor_specialty: doctorSpecialty.trim() || undefined,
-        doctor_phone: doctorPhone.trim() || undefined,
       })
 
       let profile: PatientProfile
@@ -586,10 +598,10 @@ function SignupScreen({
           phone: phone.trim() || null,
           age: age.trim() ? parseInt(age.trim(), 10) : null,
           emergency_contact_name: emergencyContact.trim() || null,
-          doctor_name: res.doctor_name || doctorName.trim() || null,
-          doctor_email: res.doctor_email || doctorEmail.trim() || null,
-          doctor_specialty: doctorSpecialty.trim() || null,
-          doctor_phone: doctorPhone.trim() || null,
+          doctor_name: null,
+          doctor_email: null,
+          doctor_specialty: null,
+          doctor_phone: null,
           created_at: new Date().toISOString(),
         }
       }
@@ -628,17 +640,16 @@ function SignupScreen({
               <h1 style={{ fontSize: '1.45rem', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>
                 Sehat Saathi
               </h1>
-              <span className="signup-badge">Patient Registration</span>
             </div>
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-              Your gentle voice health companion
+              A simple place for your daily care
             </p>
           </div>
         </div>
 
         <div style={{ background: '#f8fafc', padding: '14px 16px', borderRadius: 14, border: '1px solid var(--line)', marginBottom: 20 }}>
           <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--ink)', lineHeight: 1.45 }}>
-            👋 <strong>Welcome!</strong> Please enter your details below to activate your individual profile and connect your medical care companion.
+            <strong>Welcome.</strong> Add a few details so your care plan and reminders are ready.
           </p>
         </div>
 
@@ -667,7 +678,7 @@ function SignupScreen({
           {/* Section 1: Patient Details */}
           <div className="form-section-title">
             <User size={18} />
-            <span>1. Patient Profile Details</span>
+            <span>Your details</span>
           </div>
 
           <div className="profile-form-grid">
@@ -686,7 +697,7 @@ function SignupScreen({
             </div>
 
             <div className="form-field-group">
-              <label htmlFor="signup-email">Personal Gmail / Email</label>
+              <label htmlFor="signup-email">Email <span className="field-optional">(optional)</span></label>
               <input
                 id="signup-email"
                 type="email"
@@ -697,7 +708,7 @@ function SignupScreen({
             </div>
 
             <div className="form-field-group">
-              <label htmlFor="signup-phone">Phone Number</label>
+              <label htmlFor="signup-phone">Phone <span className="field-optional">(optional)</span></label>
               <input
                 id="signup-phone"
                 type="tel"
@@ -708,7 +719,7 @@ function SignupScreen({
             </div>
 
             <div className="form-field-group">
-              <label htmlFor="signup-age">Age</label>
+              <label htmlFor="signup-age">Age <span className="field-optional">(optional)</span></label>
               <input
                 id="signup-age"
                 type="number"
@@ -721,65 +732,13 @@ function SignupScreen({
             </div>
 
             <div className="form-field-group" style={{ gridColumn: 'span 2' }}>
-              <label htmlFor="signup-emergency">Emergency Family Contact</label>
+              <label htmlFor="signup-emergency">Emergency contact <span className="field-optional">(optional)</span></label>
               <input
                 id="signup-emergency"
                 type="text"
                 placeholder="e.g. Contact name, relationship, phone number"
                 value={emergencyContact}
                 onChange={(e) => setEmergencyContact(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Section 2: Primary Doctor Details */}
-          <div className="form-section-title" style={{ marginTop: 22 }}>
-            <Stethoscope size={18} />
-            <span>2. Primary Doctor & Clinic (For Email Summaries)</span>
-          </div>
-
-          <div className="profile-form-grid">
-            <div className="form-field-group">
-              <label htmlFor="signup-doc-name">Doctor's Name</label>
-              <input
-                id="signup-doc-name"
-                type="text"
-                placeholder="Doctor's full name"
-                value={doctorName}
-                onChange={(e) => setDoctorName(e.target.value)}
-              />
-            </div>
-
-            <div className="form-field-group">
-              <label htmlFor="signup-doc-email">Doctor's Gmail Address</label>
-              <input
-                id="signup-doc-email"
-                type="email"
-                placeholder="doctor@gmail.com"
-                value={doctorEmail}
-                onChange={(e) => setDoctorEmail(e.target.value)}
-              />
-            </div>
-
-            <div className="form-field-group">
-              <label htmlFor="signup-doc-spec">Specialty</label>
-              <input
-                id="signup-doc-spec"
-                type="text"
-                placeholder="e.g. Family Medicine, Geriatrics"
-                value={doctorSpecialty}
-                onChange={(e) => setDoctorSpecialty(e.target.value)}
-              />
-            </div>
-
-            <div className="form-field-group">
-              <label htmlFor="signup-doc-phone">Clinic Phone</label>
-              <input
-                id="signup-doc-phone"
-                type="tel"
-                placeholder="e.g. +1 (555) 000-0000"
-                value={doctorPhone}
-                onChange={(e) => setDoctorPhone(e.target.value)}
               />
             </div>
           </div>
@@ -798,7 +757,7 @@ function SignupScreen({
                 </>
               ) : (
                 <>
-                  <span>Complete Setup & Start Sehat Saathi</span>
+                  <span>Continue to Sehat Saathi</span>
                   <ChevronRight size={20} />
                 </>
               )}
@@ -882,6 +841,151 @@ function RoleScreen({ onChoose }: { onChoose: (role: 'patient' | 'caregiver') =>
   )
 }
 
+function ReminderScreen({
+  nextMedicine,
+  dueReminder,
+  reminders,
+  dismissedDueReminderId,
+  linkedCaregiversCount,
+  onBack,
+  onTakeMedicine,
+  onSnooze,
+  onEmergencyClick,
+  onPrescriptionsClick,
+  onHomeClick,
+  onVisitsClick,
+  onRecordsClick,
+}: {
+  nextMedicine: string
+  dueReminder: DueReminderResponse | null
+  reminders: any[]
+  dismissedDueReminderId: number | null
+  linkedCaregiversCount: number
+  onBack: () => void
+  onTakeMedicine: (reminderId: number, timeOffsetMinutes: number, note?: string) => void
+  onSnooze: (reminderId: number) => void
+  onEmergencyClick: () => void
+  onPrescriptionsClick: () => void
+  onHomeClick: () => void
+  onVisitsClick: () => void
+  onRecordsClick: () => void
+}) {
+  const reminder = dueReminder?.reminder
+  const isActive = Boolean(reminder && dismissedDueReminderId !== reminder.id)
+  const medicineName = reminder?.medicine_name || nextMedicine.split(' ')[0] || 'Your medicine'
+  const dose = reminder
+    ? `${reminder.dose_text} · ${reminder.timing_text}`
+    : nextMedicine || 'Add a medicine schedule to see it here'
+
+  return (
+    <main className="wire-reminder-page">
+      <header className="wire-screen-header">
+        <button className="wire-back-button" onClick={onBack} aria-label="Back to home">
+          <ArrowLeft size={20} />
+        </button>
+        <span className="wire-time">18:30</span>
+        <button className="wire-more-button" onClick={onPrescriptionsClick} aria-label="Manage medicines">
+          <Pill size={20} />
+        </button>
+      </header>
+
+      <section className="wire-reminder-card">
+        <div className="wire-pill-icon" aria-hidden="true">
+          <Pill size={54} strokeWidth={1.4} />
+        </div>
+        <p className="wire-eyebrow">MEDICINE REMINDER</p>
+        <h1>Time for your<br />medicine</h1>
+
+        <div className="wire-medicine-detail">
+          <strong>{medicineName}</strong>
+          <span>{dose}</span>
+          {reminder && <span><Clock size={14} /> {reminder.timing_text}</span>}
+        </div>
+
+        {isActive && reminder ? (
+          <>
+            <button
+              className="wire-taken-button"
+              onClick={() => onTakeMedicine(reminder.id, 0, 'Taken just now')}
+            >
+              <Check size={18} />
+              I have taken my medicine
+            </button>
+            <button className="wire-snooze-button" onClick={() => onSnooze(reminder.id)}>
+              <Clock size={16} />
+              Snooze for 10 minutes
+            </button>
+          </>
+        ) : (
+          <div className="wire-complete-state">
+            <CheckCircle2 size={18} />
+            {reminder ? 'Medicine recorded for this reminder' : 'No medicine due right now'}
+          </div>
+        )}
+
+        <div className="wire-family-status">
+          <CheckCircle2 size={17} />
+          <span>
+            <strong>{linkedCaregiversCount > 0 ? 'Family connected' : 'Family not connected'}</strong>
+            <small>
+              {linkedCaregiversCount > 0
+                ? 'Your care team can see your reminder status.'
+                : 'Connect a family member from the Family menu.'}
+            </small>
+          </span>
+        </div>
+      </section>
+
+      <section className="wire-all-reminders">
+        <div className="wire-section-heading">
+          <h2>All reminders</h2>
+          <button onClick={onPrescriptionsClick}>Manage</button>
+        </div>
+        {reminders.length === 0 ? (
+          <p className="wire-empty-reminders">No reminders yet. Add a prescription to create one.</p>
+        ) : (
+          reminders.map((item) => (
+            <div className={`wire-reminder-row ${item.id === reminder?.id && isActive ? 'current' : ''}`} key={item.id}>
+              <span className="wire-reminder-row-icon"><Pill size={18} /></span>
+              <span className="wire-reminder-row-copy">
+                <strong>{item.medicine_name}</strong>
+                <small>{item.dose_text} · {item.timing_text}</small>
+              </span>
+              <span className={`wire-status ${item.status === 'taken' ? 'taken' : ''}`}>
+                {item.status === 'taken' ? 'Taken' : 'Upcoming'}
+              </span>
+            </div>
+          ))
+        )}
+      </section>
+
+      <button className="wire-help-button" onClick={onEmergencyClick}>
+        <PhoneCall size={17} />
+        Help / Emergency
+      </button>
+
+      <nav className="mobile-bottom-nav" aria-label="Main care navigation">
+        <button onClick={onHomeClick}>
+          <Home size={20} />
+          <span>Home</span>
+        </button>
+        <button className="active" onClick={() => undefined}>
+          <Pill size={20} />
+          <span>Reminders</span>
+        </button>
+        <button onClick={onVisitsClick}>
+          <Calendar size={20} />
+          <span>Visits</span>
+        </button>
+        <button onClick={onRecordsClick}>
+          <ClipboardList size={20} />
+          <span>Records</span>
+        </button>
+      </nav>
+    </main>
+  )
+}
+
 /* -------------------------------------------------------------
    Patient Home Screen (UX-01, UX-10, UX-11, UX-17, UX-40)
 ------------------------------------------------------------- */
@@ -904,6 +1008,7 @@ function HomeScreen({
   onProfileClick,
   onMemoryClick,
   onRoleSwitch,
+  onReminderClick,
 }: {
   patientName: string
   patientProfile: PatientProfile | null
@@ -923,6 +1028,7 @@ function HomeScreen({
   onProfileClick: () => void
   onMemoryClick: () => void
   onRoleSwitch: () => void
+  onReminderClick: () => void
 }) {
   const [typedQuestion, setTypedQuestion] = useState('')
   const [showTypedInput, setShowTypedInput] = useState(false)
@@ -1087,7 +1193,7 @@ function HomeScreen({
       )}
 
       {/* Daily Medication Card */}
-      <section className="daily-card" onClick={onPrescriptionsClick} style={{ cursor: 'pointer' }}>
+      <section className="daily-card" onClick={onReminderClick} style={{ cursor: 'pointer' }}>
         <div className="daily-icon">
           <Bell size={24} />
         </div>
@@ -1097,6 +1203,15 @@ function HomeScreen({
         </div>
         <ChevronRight size={22} color="var(--muted)" />
       </section>
+
+      <button className="wire-family-link" onClick={onFamilyClick}>
+        <Users size={19} />
+        <span>
+          <strong>{linkedCaregiversCount > 0 ? 'Family caregiver connected' : 'Add a family caregiver'}</strong>
+          <small>{linkedCaregiversCount > 0 ? `${linkedCaregiversCount} linked caregiver${linkedCaregiversCount === 1 ? '' : 's'}` : 'Share reminders and emergency alerts with someone you trust'}</small>
+        </span>
+        <ChevronRight size={18} />
+      </button>
 
       {/* Voice Zone with 120px+ Big Microphone Button (UX-01) */}
       <section className="voice-zone">
@@ -1192,6 +1307,25 @@ function HomeScreen({
           <ChevronRight size={16} />
         </button>
       </div>
+
+      <nav className="mobile-bottom-nav" aria-label="Main care navigation">
+        <button className="active" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          <Home size={20} />
+          <span>Home</span>
+        </button>
+        <button onClick={onReminderClick}>
+          <Pill size={20} />
+          <span>Reminders</span>
+        </button>
+        <button onClick={onDoctorClick}>
+          <Calendar size={20} />
+          <span>Visits</span>
+        </button>
+        <button onClick={onMemoryClick}>
+          <ClipboardList size={20} />
+          <span>Records</span>
+        </button>
+      </nav>
     </main>
   )
 }
@@ -1327,14 +1461,14 @@ function EmergencyScreen({
     }
   }, [])
 
-  const handleToggleSiren = () => {
-    if (isSirenOn) {
-      onSilenceSiren()
-      setIsSirenOn(false)
-    } else {
-      onRestartSiren()
-      setIsSirenOn(true)
-    }
+  const handleSilenceAlarm = () => {
+    onSilenceSiren()
+    setIsSirenOn(false)
+  }
+
+  const handleRestartAlarm = () => {
+    onRestartSiren()
+    setIsSirenOn(true)
   }
 
   return (
@@ -1358,25 +1492,29 @@ function EmergencyScreen({
         <span>Call 911 Now</span>
       </a>
 
-      {/* Prominent Mute / Unmute Siren Control */}
+      {/* Explicit alarm stop control */}
       <button
         type="button"
         className="emergency-silence-btn"
-        onClick={handleToggleSiren}
-        aria-label={isSirenOn ? 'Silence emergency buzzer' : 'Turn on emergency buzzer'}
+        onClick={handleSilenceAlarm}
+        disabled={!isSirenOn}
+        aria-label="Silence emergency alarm"
       >
-        {isSirenOn ? (
-          <>
-            <VolumeX size={22} />
-            <span>Silence Emergency Buzzer</span>
-          </>
-        ) : (
-          <>
-            <Volume2 size={22} />
-            <span>Sound Emergency Buzzer</span>
-          </>
-        )}
+        <VolumeX size={22} />
+        <span>{isSirenOn ? 'Silence Alarm' : 'Alarm Silenced'}</span>
       </button>
+
+      {!isSirenOn && (
+        <button
+          type="button"
+          className="emergency-restart-btn"
+          onClick={handleRestartAlarm}
+          aria-label="Restart emergency alarm"
+        >
+          <Volume2 size={18} />
+          <span>Restart Alarm</span>
+        </button>
+      )}
 
       <div className="notify-card">
         <strong>Family Notification Status</strong>
@@ -1389,6 +1527,8 @@ function EmergencyScreen({
 
       <button
         onClick={onBack}
+        className="emergency-close-btn"
+        aria-label="Close emergency alert and return home"
         style={{
           marginTop: 24,
           background: 'transparent',
@@ -1400,7 +1540,8 @@ function EmergencyScreen({
           cursor: 'pointer',
         }}
       >
-        Back to Home
+        <X size={18} />
+        Close Emergency Alert
       </button>
     </main>
   )
@@ -2244,7 +2385,7 @@ function DoctorConsultModal({
     loadHistory()
   }, [])
 
-  // 1. Agent drafts email strictly as status='draft'
+  // Draft email strictly as status='draft'
   const handleDraftEmail = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!healthIssue.trim()) return
@@ -2322,7 +2463,7 @@ function DoctorConsultModal({
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: 640 }}>
+      <div className="modal-content doctor-modal-content" style={{ maxWidth: 640 }}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">CLINICAL ASSISTANT</p>
@@ -2553,6 +2694,13 @@ function DoctorConsultModal({
                           <span className="history-field-value muted">{item.prescriptions_summary}</span>
                         </div>
                       )}
+                      <div className="history-mail-preview">
+                        <div className="history-mail-preview-label">
+                          <Mail size={14} />
+                          Message preview
+                        </div>
+                        <p>{item.body}</p>
+                      </div>
                     </div>
 
                     <div className="history-item-actions">
@@ -3123,8 +3271,9 @@ function CaregiverScreen({
   const [pairStatusMsg, setPairStatusMsg] = useState('')
   const [isRedeeming, setIsRedeeming] = useState(false)
 
-  // Clinician Note State
-  const [clinicianNotes, setClinicianNotes] = useState<Record<number, string>>({})
+  const [handlingAlertId, setHandlingAlertId] = useState<number | null>(null)
+  const [confirmAlertId, setConfirmAlertId] = useState<number | null>(null)
+  const [handledMessage, setHandledMessage] = useState('')
 
   // Handle scanned QR Code from camera or upload
   const handleQrScanned = async (scannedCode: string) => {
@@ -3265,19 +3414,45 @@ function CaregiverScreen({
     return () => clearInterval(poll)
   }, [pendingId])
 
-  // Submit Clinician Note (UX-37)
-  const handleSubmitNote = async (reviewId: number) => {
-    const note = clinicianNotes[reviewId]
-    if (!note || !note.trim()) return
-    await addClinicianNote(reviewId, note.trim())
-    setClinicianNotes((prev) => ({ ...prev, [reviewId]: '' }))
-    loadDashboard()
+  const handleCaregiverMarkHandled = async (alertId: number) => {
+    if (handlingAlertId !== null) return
+    setHandlingAlertId(alertId)
+    setHandledMessage('')
+    try {
+      await onMarkHandled(alertId)
+      setDashboard((current) => current ? {
+        ...current,
+        alerts: current.alerts.filter((alert) => alert.id !== alertId),
+        summary: {
+          ...current.summary,
+          open_alerts_count: Math.max(0, current.summary.open_alerts_count - 1),
+        },
+      } : current)
+      setActiveEmergencyAlert((current: { id: number; transcript: string; created_at: string } | null) =>
+        current?.id === alertId ? null : current
+      )
+      setHandledMessage('Emergency alert marked as handled.')
+      setConfirmAlertId(null)
+      await loadDashboard()
+    } catch (error) {
+      setHandledMessage(error instanceof Error ? error.message : 'Could not mark the alert as handled.')
+    } finally {
+      setHandlingAlertId(null)
+    }
+
+  }
+
+  const requestMarkHandled = (alertId: number) => {
+    if (handlingAlertId === null) {
+      setHandledMessage('')
+      setConfirmAlertId(alertId)
+    }
   }
 
   // 1. Caregiver Key Entry Screen (UX-43)
   if (!token) {
     return (
-      <main className="center-page">
+      <main className="center-page caregiver-connect-page">
         <div className="brand" style={{ marginBottom: 20 }}>
           <span className="brand-mark"><HeartPulse size={22} /></span>
           <span>Sehat Saathi · Caregiver Portal</span>
@@ -3368,7 +3543,7 @@ function CaregiverScreen({
 
   // 2. Caregiver Dashboard View (UX-35 to UX-38)
   return (
-    <main className="page">
+    <main className="page caregiver-page">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><HeartPulse size={22} /></span>
@@ -3417,11 +3592,31 @@ function CaregiverScreen({
               <VolumeX size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
               Silence Siren
             </button>
-            <button className="btn-handled" onClick={() => onMarkHandled(activeEmergencyAlert.id)}>
+            <button
+              className="btn-handled"
+              onClick={() => requestMarkHandled(activeEmergencyAlert.id)}
+              disabled={handlingAlertId === activeEmergencyAlert.id}
+            >
               <Check size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
-              Mark as Handled
+              {handlingAlertId === activeEmergencyAlert.id ? 'Handling...' : 'Mark as Handled'}
             </button>
           </div>
+          {confirmAlertId === activeEmergencyAlert.id && (
+            <div className="handled-confirmation" role="alertdialog" aria-live="polite">
+              <strong>Can you really mark this issue as handled?</strong>
+              <div className="handled-confirmation-actions">
+                <button
+                  type="button"
+                  onClick={() => handleCaregiverMarkHandled(activeEmergencyAlert.id)}
+                >
+                  Yes, mark handled
+                </button>
+                <button type="button" onClick={() => setConfirmAlertId(null)}>
+                  No, keep alert
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3468,12 +3663,12 @@ function CaregiverScreen({
             <strong>{dashboard?.summary.reminders_missed_today || 0}</strong>
             <small>Pills Missed</small>
           </div>
-          <div className="stat-card">
-            <strong>{dashboard?.summary.review_items_count || 0}</strong>
-            <small>Clinician Review</small>
-          </div>
         </div>
       </section>
+
+      {handledMessage && (
+        <p className="caregiver-action-message" role="status">{handledMessage}</p>
+      )}
 
       {/* High-Priority Emergency Alerts Section (UX-36) */}
       <div className="section-title">
@@ -3488,45 +3683,23 @@ function CaregiverScreen({
             <div className="words">“{alert.transcript_excerpt}”</div>
             <p style={{ fontSize: '0.85rem', color: '#991b1b' }}>Action: {alert.action_taken}</p>
             <button
-              onClick={() => onMarkHandled(alert.id)}
+              onClick={() => requestMarkHandled(alert.id)}
+              disabled={handlingAlertId === alert.id}
               style={{ marginTop: 12, minHeight: 44, padding: '8px 16px', background: 'var(--green)', color: '#fff', borderRadius: 10, fontWeight: 700 }}
             >
-              ✓ Mark Handled
+              {handlingAlertId === alert.id ? 'Handling...' : '✓ Mark Handled'}
             </button>
-          </div>
-        ))
-      )}
-
-      {/* Clinician Review Queue (UX-37) */}
-      <div className="section-title">
-        <h2>Clinician Review Queue</h2>
-      </div>
-      {(!dashboard?.review_queue || dashboard.review_queue.length === 0) ? (
-        <p className="muted" style={{ fontStyle: 'italic', marginBottom: 20 }}>Review queue is clear.</p>
-      ) : (
-        dashboard.review_queue.map((item) => (
-          <div key={item.id} className="source-card">
-            <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Patient asked: “{item.question}”</strong>
-            <p style={{ margin: '8px 0', fontSize: '0.85rem', color: 'var(--muted)' }}>Reason: {item.reason}</p>
-            {item.clinician_note ? (
-              <div style={{ background: '#eef7ed', padding: 10, borderRadius: 10, fontSize: '0.85rem' }}>
-                <strong>Clinician Note:</strong> {item.clinician_note}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <input
-                  type="text"
-                  placeholder="Add clinician note or advice..."
-                  value={clinicianNotes[item.id] || ''}
-                  onChange={(e) => setClinicianNotes({ ...clinicianNotes, [item.id]: e.target.value })}
-                  style={{ flex: 1, minHeight: 46, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--line)' }}
-                />
-                <button
-                  onClick={() => handleSubmitNote(item.id)}
-                  style={{ minHeight: 46, padding: '8px 14px', background: 'var(--green)', color: '#fff', borderRadius: 10, fontWeight: 700 }}
-                >
-                  Submit
-                </button>
+            {confirmAlertId === alert.id && (
+              <div className="handled-confirmation" role="alertdialog" aria-live="polite">
+                <strong>Can you really mark this issue as handled?</strong>
+                <div className="handled-confirmation-actions">
+                  <button type="button" onClick={() => handleCaregiverMarkHandled(alert.id)}>
+                    Yes, mark handled
+                  </button>
+                  <button type="button" onClick={() => setConfirmAlertId(null)}>
+                    No, keep alert
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -3624,7 +3797,7 @@ function MemoryModal({
 
   return (
     <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Conversation and Medication History">
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+      <div className="modal-content memory-modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ background: 'var(--mint)', color: 'var(--green-dark)', padding: 10, borderRadius: 12, display: 'grid', placeItems: 'center' }}>
@@ -3699,7 +3872,7 @@ function MemoryModal({
                   <span className="memory-query-text">"{m.user_query}"</span>
                 </div>
                 <div className="memory-assistant-response">
-                  <span className="memory-assistant-label">Sehat Saathi:</span>
+                  <span className="memory-assistant-label">Care note:</span>
                   <span className="memory-response-text">{m.assistant_response}</span>
                 </div>
               </div>

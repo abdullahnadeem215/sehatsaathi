@@ -311,7 +311,10 @@ export async function markAlertHandled(alertId: number): Promise<boolean> {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   })
-  return res.ok
+  if (!res.ok) {
+    throw new Error('Failed to mark alert as handled')
+  }
+  return true
 }
 
 export async function addClinicianNote(reviewId: number, clinicianNote: string): Promise<boolean> {
@@ -600,4 +603,3 @@ export async function getPatientMemories(limit: number = 8): Promise<PatientMemo
     return []
   }
 }
-
