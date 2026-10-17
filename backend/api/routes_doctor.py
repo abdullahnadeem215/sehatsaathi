@@ -49,7 +49,7 @@ async def get_patient_profile(user: Dict[str, Any] = Depends(resolve_user_contex
     conn = await get_db_connection()
     try:
         cursor = await conn.execute(
-            "SELECT id, display_name, email, doctor_name, doctor_email, doctor_specialty, doctor_phone, created_at FROM patients WHERE id = ?",
+            "SELECT id, display_name, email, phone, age, emergency_contact_name, doctor_name, doctor_email, doctor_specialty, doctor_phone, created_at FROM patients WHERE id = ?",
             (user["patient_id"],)
         )
         row = await cursor.fetchone()
@@ -60,6 +60,9 @@ async def get_patient_profile(user: Dict[str, Any] = Depends(resolve_user_contex
             patient_id=row["id"],
             display_name=row["display_name"],
             email=row["email"],
+            phone=row["phone"],
+            age=row["age"],
+            emergency_contact_name=row["emergency_contact_name"],
             doctor_name=row["doctor_name"] or "Dr. Sarah Mitchell",
             doctor_email=row["doctor_email"] or "dr.sarah@gmail.com",
             doctor_specialty=row["doctor_specialty"] or "Cardiologist / General Physician",
@@ -87,6 +90,15 @@ async def update_patient_profile(
         if payload.email is not None:
             updates.append("email = ?")
             params.append(payload.email.strip())
+        if payload.phone is not None:
+            updates.append("phone = ?")
+            params.append(payload.phone.strip())
+        if payload.age is not None:
+            updates.append("age = ?")
+            params.append(payload.age)
+        if payload.emergency_contact_name is not None:
+            updates.append("emergency_contact_name = ?")
+            params.append(payload.emergency_contact_name.strip())
         if payload.doctor_name is not None:
             updates.append("doctor_name = ?")
             params.append(payload.doctor_name.strip())
@@ -107,7 +119,7 @@ async def update_patient_profile(
             await conn.commit()
 
         cursor = await conn.execute(
-            "SELECT id, display_name, email, doctor_name, doctor_email, doctor_specialty, doctor_phone, created_at FROM patients WHERE id = ?",
+            "SELECT id, display_name, email, phone, age, emergency_contact_name, doctor_name, doctor_email, doctor_specialty, doctor_phone, created_at FROM patients WHERE id = ?",
             (user["patient_id"],)
         )
         row = await cursor.fetchone()
@@ -115,6 +127,9 @@ async def update_patient_profile(
             patient_id=row["id"],
             display_name=row["display_name"],
             email=row["email"],
+            phone=row["phone"],
+            age=row["age"],
+            emergency_contact_name=row["emergency_contact_name"],
             doctor_name=row["doctor_name"],
             doctor_email=row["doctor_email"],
             doctor_specialty=row["doctor_specialty"],

@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS patients (
     device_token_hash TEXT NOT NULL,
     preferred_script TEXT DEFAULT 'en',
     email TEXT,
+    phone TEXT,
+    age INTEGER,
+    emergency_contact_name TEXT,
     doctor_name TEXT,
     doctor_email TEXT,
     doctor_specialty TEXT,
@@ -221,6 +224,9 @@ def init_db_sync():
     existing_cols = [row[1] for row in cursor.fetchall()]
     new_cols = [
         ("email", "TEXT"),
+        ("phone", "TEXT"),
+        ("age", "INTEGER"),
+        ("emergency_contact_name", "TEXT"),
         ("doctor_name", "TEXT"),
         ("doctor_email", "TEXT"),
         ("doctor_specialty", "TEXT"),
@@ -266,15 +272,15 @@ def init_db_sync():
                             (summary["id"], line["line_id"], line["text"])
                         )
 
-    # Seed default patient if not present
-    cursor.execute("SELECT COUNT(*) FROM patients WHERE id = 'default-patient'")
-    if cursor.fetchone()[0] == 0:
-        # Default patient device token for demo/testing: "demo-patient-token-12345"
-        token_hash = hash_token("demo-patient-token-12345")
-        cursor.execute(
-            "INSERT INTO patients (id, display_name, device_token_hash, preferred_script) VALUES (?, ?, ?, ?)",
-            ("default-patient", "Robert Jenkins", token_hash, "en")
-        )
+    # Seed default patient ONLY during automated test runs (for backward test compatibility)
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        cursor.execute("SELECT COUNT(*) FROM patients WHERE id = 'default-patient'")
+        if cursor.fetchone()[0] == 0:
+            token_hash = hash_token("demo-patient-token-12345")
+            cursor.execute(
+                "INSERT INTO patients (id, display_name, device_token_hash, preferred_script) VALUES (?, ?, ?, ?)",
+                ("default-patient", "Robert Jenkins", token_hash, "en")
+            )
 
     conn.commit()
     conn.close()

@@ -23,16 +23,29 @@ router = APIRouter(prefix="/api", tags=["Patient"])
 
 
 @router.post("/patient/register", response_model=PatientRegisterResponse)
+@router.post("/patient/signup", response_model=PatientRegisterResponse)
 async def register_patient(payload: PatientRegisterRequest):
-    """FR-19: Create a patient record and return the long random device token."""
+    """FR-19: Create an individual patient record with personal/doctor details and issue device token."""
     patient_id, device_token = await pairing_service.register_patient_device(
-        display_name=payload.display_name
+        display_name=payload.display_name,
+        email=payload.email,
+        phone=payload.phone,
+        age=payload.age,
+        emergency_contact_name=payload.emergency_contact_name,
+        doctor_name=payload.doctor_name,
+        doctor_email=payload.doctor_email,
+        doctor_specialty=payload.doctor_specialty,
+        doctor_phone=payload.doctor_phone,
+        seed_reminders=False
     )
     return PatientRegisterResponse(
         patient_id=patient_id,
         display_name=payload.display_name,
+        email=payload.email,
+        doctor_name=payload.doctor_name,
+        doctor_email=payload.doctor_email,
         device_token=device_token,
-        message="Patient device registered successfully. Keep device token securely in local storage."
+        message="Patient account registered successfully. Your health companion is ready!"
     )
 
 

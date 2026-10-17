@@ -3,6 +3,7 @@ Drafts concise, professional emails for doctors when a patient reports a health 
 STRICT RULE: The agent NEVER sends emails automatically. It creates a draft, displays
 it to the patient/caregiver, and requires explicit user approval before sending.
 """
+import os
 import smtplib
 import logging
 from email.mime.text import MIMEText
@@ -175,12 +176,34 @@ class DoctorEmailService:
     def _dispatch_email_smtp(self, to_email: str, from_email: str, subject: str, body: str):
         """Simulates or sends email using standard SMTP.
         In local/demo mode without SMTP server, safely logs delivery.
+        If SMTP_HOST or SMTP_USER/GMAIL credentials are configured in .env, sends real email.
         """
-        try:
-            logger.info(f"[EMAIL DISPATCH] To: {to_email} | From: {from_email} | Subject: {subject}")
-            logger.info(f"[EMAIL BODY]\n{body}")
-        except Exception as e:
-            logger.warning(f"SMTP dispatch warning: {e}")
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER") or os.getenv("GMAIL_USER")
+        smtp_pass = os.getenv("SMTP_PASSWORD") or os.getenv("GMAIL_APP_PASSWORD")
+
+        if smtp_host and smtp_user and smtp_pass:
+            try:
+                msg = MIMEMultipart()
+                msg["From"] = from_email or smtp_user
+                msg["To"] = to_email
+                msg["Subject"] = subject
+                msg.attach(MIMEText(body, "plain", "utf-8"))
+
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(msg)
+                logger.info(f"Doctor email successfully sent via SMTP to {to_email}")
+                return True
+            except Exception as e:
+                logger.error(f"Real SMTP delivery failed: {e}. Falling back to runtime client dispatch.")
+
+        logger.info(f"[EMAIL DISPATCH] To: {to_email} | From: {from_email} | Subject: {subject}")
+        logger.info(f"[EMAIL BODY]\n{body}")
+        return False
 
 
 doctor_email_service = DoctorEmailService()
+

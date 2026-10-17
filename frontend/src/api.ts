@@ -112,19 +112,44 @@ export const getCaregiverToken = () => localStorage.getItem('caregiver_session_t
 export const setCaregiverToken = (token: string) => localStorage.setItem('caregiver_session_token', token)
 
 // Patient API functions
-export async function registerPatient(displayName: string = 'Robert Jenkins'): Promise<{ patient_id: string; device_token: string; display_name: string }> {
+export interface SignupParams {
+  display_name: string
+  email?: string
+  phone?: string
+  age?: number | null
+  emergency_contact_name?: string
+  doctor_name?: string
+  doctor_email?: string
+  doctor_specialty?: string
+  doctor_phone?: string
+}
+
+export async function registerPatient(params: string | SignupParams = 'Robert Jenkins'): Promise<{
+  patient_id: string
+  device_token: string
+  display_name: string
+  email?: string
+  doctor_name?: string
+  doctor_email?: string
+  message: string
+}> {
+  const payload = typeof params === 'string' ? { display_name: params, preferred_script: 'en' } : { ...params, preferred_script: 'en' }
   const res = await fetch(`${API_BASE}/api/patient/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ display_name: displayName, preferred_script: 'en' }),
+    body: JSON.stringify(payload),
   })
   if (!res.ok) throw new Error('Failed to register patient device')
   const data = await res.json()
   setPatientToken(data.device_token)
   localStorage.setItem('patient_display_name', data.display_name)
   localStorage.setItem('patient_id', data.patient_id)
+  if (data.email) localStorage.setItem('patient_email', data.email)
+  localStorage.setItem('patient_registered', 'true')
   return data
 }
+
+export const signupPatient = registerPatient
 
 export async function submitTurn(params: { text?: string; audio_base64?: string | null }): Promise<TurnResponse> {
   let token = getPatientToken()
@@ -344,6 +369,9 @@ export interface PatientProfile {
   patient_id: string
   display_name: string
   email: string | null
+  phone?: string | null
+  age?: number | null
+  emergency_contact_name?: string | null
   doctor_name: string | null
   doctor_email: string | null
   doctor_specialty: string | null
