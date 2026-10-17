@@ -1,0 +1,13 @@
+{
+  "name": "sehat-saathi-webpage",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Sehat Saathi showcase PWA and Android Trusted Web Activity build entry point.",
+  "scripts": {
+    "check": "node --check app.js",
+    "build:apk": "bubblewrap build"
+  },
+  "devDependencies": {
+    "@bubblewrap/cli": "^1.22.0"
+  }
+}

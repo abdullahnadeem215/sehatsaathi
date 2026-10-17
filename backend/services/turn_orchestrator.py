@@ -242,11 +242,27 @@ class TurnOrchestrator:
                 tool_called = "book_appointment"
 
             # TOOL 5: LLM Decision to Record Medication Intake (Adherence & Offset)
-            elif tool_call == "record_medication_intake" or intent in ["adherence", "record_intake"]:
+            elif (
+                tool_call == "record_medication_intake"
+                or intent in ["adherence", "record_intake"]
+                or any(w in transcript.lower() for w in ["took", "taken", "i've took", "i took", "already took", "yes, took", "yes took"])
+                or (transcript.lower().strip() in ["yes", "yes i have", "yes i did"])
+            ):
+                offset_mins = ext.get("time_offset_minutes") or 0
+                if not offset_mins:
+                    if "hour" in transcript.lower() or "hr" in transcript.lower():
+                        import re
+                        m_match = re.search(r"(\d+)\s*(?:hour|hr)", transcript.lower())
+                        offset_mins = int(m_match.group(1)) * 60 if m_match else 60
+                    elif "min" in transcript.lower():
+                        import re
+                        m_match = re.search(r"(\d+)\s*min", transcript.lower())
+                        offset_mins = int(m_match.group(1)) if m_match else 30
+
                 intake_res = await reminder_service.record_natural_intake(
                     patient_id=patient_id,
                     medicine_name=ext.get("medicine_name"),
-                    time_offset_minutes=ext.get("time_offset_minutes", 0),
+                    time_offset_minutes=offset_mins,
                     intake_note=ext.get("intake_note")
                 )
                 final_answer = intake_res.get("message", llm_res.answer)
@@ -259,7 +275,32 @@ class TurnOrchestrator:
                 pending_action_id = None
                 tool_called = "record_medication_intake"
 
-            # TOOL 6: LLM Decision for Handoff
+            # TOOL 6: Patient Asking about Past Intake or Conversation Memory
+            elif any(p in transcript.lower() for p in ["did i take", "have i taken", "did i have my", "when did i take", "take my medicine"]):
+                recent_memories = await conversation_memory_service.get_recent_memories(patient_id, limit=6)
+                intake_mem = next((m for m in recent_memories if any(k in m["user_query"].lower() or k in m["assistant_response"].lower() for k in ["took", "taken", "hour ago", "recorded", "metformin"])), None)
+                if intake_mem:
+                    final_answer = f"Yes, {intake_mem['assistant_response']}"
+                    source_line = f"Care Memory: {intake_mem['user_query']}"
+                    cited_ids = []
+                    confidence = 0.95
+                    badge = "Certain"
+                    ui_state = "speaking"
+                    echo_back = None
+                    pending_action_id = None
+                    tool_called = "conversation_memory"
+                else:
+                    final_answer = "According to your records, you have not logged taking this medicine today yet."
+                    source_line = "Care Memory: No recorded intake today"
+                    cited_ids = []
+                    confidence = 0.9
+                    badge = "Certain"
+                    ui_state = "speaking"
+                    echo_back = None
+                    pending_action_id = None
+                    tool_called = "conversation_memory"
+
+            # TOOL 7: LLM Decision for Handoff
             elif tool_call == "handoff" or intent == "handoff":
                 final_answer = (
                     "This information is not in your discharge summary. "

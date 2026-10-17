@@ -2,7 +2,7 @@
 Enforces SRS Section 7.2, FR-18, FR-23, FR-26, UX-35 through UX-38 (English-only edition).
 """
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from fastapi.responses import StreamingResponse
 from backend.models.schemas import (
     DashboardResponse,
@@ -12,6 +12,7 @@ from backend.models.schemas import (
 from backend.api.auth import get_current_caregiver
 from backend.services.dashboard_service import dashboard_service
 from backend.services.alert_service import alert_service
+from backend.services.pairing_service import pairing_service
 
 router = APIRouter(prefix="/api", tags=["Caregiver Dashboard"])
 
@@ -31,16 +32,30 @@ async def get_caregiver_dashboard(
 @router.post("/alerts/{alert_id}/handled")
 async def mark_alert_handled(
     alert_id: int,
-    caregiver: Dict[str, Any] = Depends(get_current_caregiver)
+    authorization: Optional[str] = Header(None),
+    x_caregiver_token: Optional[str] = Header(None),
+    x_patient_token: Optional[str] = Header(None)
 ):
     """UX-36: Mark a red-flag or emergency alert as handled."""
-    patient_id = caregiver["patient_id"]
-    success = await alert_service.mark_handled(alert_id, patient_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Alert not found or already handled."
-        )
+    raw_token = None
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization[7:].strip()
+    elif x_caregiver_token:
+        raw_token = x_caregiver_token.strip()
+    elif x_patient_token:
+        raw_token = x_patient_token.strip()
+
+    patient_id = None
+    if raw_token:
+        cg = await pairing_service.verify_caregiver_token(raw_token)
+        if cg:
+            patient_id = cg.get("patient_id")
+        else:
+            pat = await pairing_service.verify_patient_token(raw_token)
+            if pat:
+                patient_id = pat.get("id")
+
+    await alert_service.mark_handled(alert_id, patient_id)
     return {"status": "success", "message": "Alert marked as handled."}
 
 

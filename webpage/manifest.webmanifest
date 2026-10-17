@@ -1,0 +1,21 @@
+{
+  "name": "Sehat Saathi — Care that stays connected",
+  "short_name": "Sehat Saathi",
+  "description": "A calm health companion for patients, families and care teams.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eaf8e7",
+  "theme_color": "#173b21",
+  "categories": ["medical", "health", "lifestyle"],
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

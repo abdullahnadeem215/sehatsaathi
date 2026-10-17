@@ -3272,7 +3272,6 @@ function CaregiverScreen({
   const [isRedeeming, setIsRedeeming] = useState(false)
 
   const [handlingAlertId, setHandlingAlertId] = useState<number | null>(null)
-  const [confirmAlertId, setConfirmAlertId] = useState<number | null>(null)
   const [handledMessage, setHandledMessage] = useState('')
 
   // Handle scanned QR Code from camera or upload
@@ -3318,6 +3317,26 @@ function CaregiverScreen({
   }
 
   // Periodic Polling
+  // Proactively request notification permission for alarm alerts
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
+  }, [])
+
+  // Listen for Service Worker messages (e.g., silence siren from notification action)
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const handleSwMessage = (e: MessageEvent) => {
+        if (e.data?.type === 'SILENCE_SIREN') {
+          onSilenceSiren()
+        }
+      }
+      navigator.serviceWorker.addEventListener('message', handleSwMessage)
+      return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage)
+    }
+  }, [onSilenceSiren])
+
   useEffect(() => {
     if (!token) return
     loadDashboard()
@@ -3339,6 +3358,41 @@ function CaregiverScreen({
       }
       onTriggerSiren(alertData)
       speakText(`Emergency alert from patient! Patient reported: ${alertData.transcript}`)
+
+      // Dedicated PWA Background Alarm & System Notification
+      try {
+        if ('Notification' in window) {
+          if (Notification.permission === 'granted') {
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({
+                type: 'TRIGGER_ALARM',
+                payload: {
+                  title: '🚨 EMERGENCY ALARM: Patient Heart Alert!',
+                  body: `Patient words: “${alertData.transcript}”. Tap to open alert now.`,
+                  alertId: alertData.id,
+                },
+              })
+            } else {
+              new Notification('🚨 EMERGENCY ALARM: Patient Heart Alert!', {
+                body: `Patient words: “${alertData.transcript}”. Tap to open alert now.`,
+                icon: '/icon.svg',
+                tag: 'emergency-alarm',
+                requireInteraction: true,
+              })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Background notification error:', err)
+      }
+
+      // Alarm Vibration Pattern on Mobile
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate([500, 250, 500, 250, 1000, 250, 1000])
+        }
+      } catch (e) {}
+
       loadDashboard()
     }
 
@@ -3415,37 +3469,30 @@ function CaregiverScreen({
   }, [pendingId])
 
   const handleCaregiverMarkHandled = async (alertId: number) => {
-    if (handlingAlertId !== null) return
+    if (!window.confirm('Can you really handle this issue?')) return
+
+    // Immediately remove from UI and silence siren
+    setDashboard((current) => current ? {
+      ...current,
+      alerts: current.alerts.filter((alert) => alert.id !== alertId),
+      summary: {
+        ...current.summary,
+        open_alerts_count: Math.max(0, current.summary.open_alerts_count - 1),
+      },
+    } : current)
+    setActiveEmergencyAlert((current: { id: number; transcript: string; created_at: string } | null) =>
+      current?.id === alertId ? null : current
+    )
+    onSilenceSiren()
+    setHandledMessage('Emergency alert marked as handled.')
+
     setHandlingAlertId(alertId)
-    setHandledMessage('')
     try {
       await onMarkHandled(alertId)
-      setDashboard((current) => current ? {
-        ...current,
-        alerts: current.alerts.filter((alert) => alert.id !== alertId),
-        summary: {
-          ...current.summary,
-          open_alerts_count: Math.max(0, current.summary.open_alerts_count - 1),
-        },
-      } : current)
-      setActiveEmergencyAlert((current: { id: number; transcript: string; created_at: string } | null) =>
-        current?.id === alertId ? null : current
-      )
-      setHandledMessage('Emergency alert marked as handled.')
-      setConfirmAlertId(null)
-      await loadDashboard()
     } catch (error) {
-      setHandledMessage(error instanceof Error ? error.message : 'Could not mark the alert as handled.')
+      console.warn('onMarkHandled note:', error)
     } finally {
       setHandlingAlertId(null)
-    }
-
-  }
-
-  const requestMarkHandled = (alertId: number) => {
-    if (handlingAlertId === null) {
-      setHandledMessage('')
-      setConfirmAlertId(alertId)
     }
   }
 
@@ -3594,29 +3641,13 @@ function CaregiverScreen({
             </button>
             <button
               className="btn-handled"
-              onClick={() => requestMarkHandled(activeEmergencyAlert.id)}
+              onClick={() => handleCaregiverMarkHandled(activeEmergencyAlert.id)}
               disabled={handlingAlertId === activeEmergencyAlert.id}
             >
               <Check size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
               {handlingAlertId === activeEmergencyAlert.id ? 'Handling...' : 'Mark as Handled'}
             </button>
           </div>
-          {confirmAlertId === activeEmergencyAlert.id && (
-            <div className="handled-confirmation" role="alertdialog" aria-live="polite">
-              <strong>Can you really mark this issue as handled?</strong>
-              <div className="handled-confirmation-actions">
-                <button
-                  type="button"
-                  onClick={() => handleCaregiverMarkHandled(activeEmergencyAlert.id)}
-                >
-                  Yes, mark handled
-                </button>
-                <button type="button" onClick={() => setConfirmAlertId(null)}>
-                  No, keep alert
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -3683,25 +3714,12 @@ function CaregiverScreen({
             <div className="words">“{alert.transcript_excerpt}”</div>
             <p style={{ fontSize: '0.85rem', color: '#991b1b' }}>Action: {alert.action_taken}</p>
             <button
-              onClick={() => requestMarkHandled(alert.id)}
+              onClick={() => handleCaregiverMarkHandled(alert.id)}
               disabled={handlingAlertId === alert.id}
               style={{ marginTop: 12, minHeight: 44, padding: '8px 16px', background: 'var(--green)', color: '#fff', borderRadius: 10, fontWeight: 700 }}
             >
               {handlingAlertId === alert.id ? 'Handling...' : '✓ Mark Handled'}
             </button>
-            {confirmAlertId === alert.id && (
-              <div className="handled-confirmation" role="alertdialog" aria-live="polite">
-                <strong>Can you really mark this issue as handled?</strong>
-                <div className="handled-confirmation-actions">
-                  <button type="button" onClick={() => handleCaregiverMarkHandled(alert.id)}>
-                    Yes, mark handled
-                  </button>
-                  <button type="button" onClick={() => setConfirmAlertId(null)}>
-                    No, keep alert
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         ))
       )}

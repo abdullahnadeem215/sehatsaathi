@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     )
 
     # Provider Configuration
-    # Options: "amd", "huggingface", "groq", "openrouter", "mock"
-    AI_PROVIDER: str = Field(default="amd", description="Global default AI provider")
+    # Options: "groq", "amd", "huggingface", "openrouter", "mock"
+    AI_PROVIDER: str = Field(default="groq", description="Global default AI provider")
     LLM_PROVIDER: Optional[str] = Field(default=None, description="Per-capability override for LLM")
     STT_PROVIDER: Optional[str] = Field(default=None, description="Per-capability override for STT")
     TTS_PROVIDER: Optional[str] = Field(default=None, description="Per-capability override for TTS")
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # AMD Developer Cloud (vLLM, OpenAI-compatible)
     AMD_LLM_BASE_URL: Optional[str] = Field(default="https://amd-vllm-endpoint.example.com/v1")
-    AMD_LLM_API_KEY: Optional[str] = Field(default="dummy-key")
+    AMD_LLM_API_KEY: Optional[str] = Field(default="mock-amd-key")
     AMD_LLM_MODEL: str = Field(default="meta-llama/Llama-3-8B-Instruct")
     AMD_STT_URL: Optional[str] = Field(default=None)
     AMD_STT_MODEL: str = Field(default="openai/whisper-large-v3")
@@ -35,18 +35,18 @@ class Settings(BaseSettings):
     AMD_TTS_MODEL: str = Field(default="urdu-tts-model")
 
     # Hugging Face
-    HF_TOKEN: Optional[str] = Field(default=None)
+    HF_TOKEN: Optional[str] = Field(default="REDACTED_HF_TOKEN")
     HF_LLM_MODEL: str = Field(default="meta-llama/Meta-Llama-3-8B-Instruct")
     HF_STT_MODEL: str = Field(default="openai/whisper-large-v3")
     HF_TTS_MODEL: str = Field(default="facebook/mms-tts-urd-script_arabic")
 
     # Groq Cloud (Free high-speed LPU inference & Whisper STT: https://console.groq.com/keys)
-    GROQ_API_KEY: Optional[str] = Field(default=None)
+    GROQ_API_KEY: Optional[str] = Field(default="REDACTED_GROQ_API_KEY")
     GROQ_LLM_MODEL: str = Field(default="openai/gpt-oss-120b")
     GROQ_STT_MODEL: str = Field(default="whisper-large-v3")
 
     # OpenRouter (Free tier models: https://openrouter.ai/keys)
-    OPENROUTER_API_KEY: Optional[str] = Field(default=None)
+    OPENROUTER_API_KEY: Optional[str] = Field(default="REDACTED_OPENROUTER_API_KEY")
     OPENROUTER_LLM_MODEL: str = Field(default="meta-llama/llama-3.1-8b-instruct:free")
 
     # Safety & Operations

@@ -1,0 +1,60 @@
+name: Build Sehat Saathi APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "webpage-v*"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
+        run: |
+          test -n "$SEHAT_SAATHI_HOST"
+          echo "APK will target https://$SEHAT_SAATHI_HOST"
+
+      - name: Install Java and Android build tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Bubblewrap
+        run: npm install --global @bubblewrap/cli
+
+      - name: Generate Bubblewrap configuration
+        working-directory: webpage
+        env:
+          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
+        run: |
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('twa-manifest.json')); p.host=process.env.SEHAT_SAATHI_HOST; p.iconUrl='https://'+p.host+'/assets/icon.svg'; p.maskableIconUrl=p.iconUrl; fs.writeFileSync('twa-manifest.json', JSON.stringify(p, null, 2)+'\\n')"
+          bubblewrap update
+
+      - name: Build signed release APK
+        working-directory: webpage
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.BUBBLEWRAP_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.BUBBLEWRAP_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$BUBBLEWRAP_KEYSTORE_PASSWORD"
+          test -n "$BUBBLEWRAP_KEY_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
+          bubblewrap build --release --signingKey ./release.keystore --signingKeyAlias "$ANDROID_KEY_ALIAS"
+
+      - name: Publish APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sehat-saathi-android
+          path: |
+            webpage/app-release-signed.apk
+            webpage/app-release-unsigned.apk

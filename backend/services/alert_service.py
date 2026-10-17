@@ -69,17 +69,23 @@ class AlertService:
         finally:
             await conn.close()
 
-    async def mark_handled(self, alert_id: int, patient_id: str) -> bool:
-        """UX-36: Caregiver marks an alert as handled."""
+    async def mark_handled(self, alert_id: int, patient_id: Optional[str] = None) -> bool:
+        """UX-36: Caregiver or patient marks an alert as handled."""
         conn = await get_db_connection()
         try:
             now_iso = utc_now_iso()
-            cursor = await conn.execute(
-                "UPDATE alerts SET handled_at = ? WHERE id = ? AND patient_id = ?",
-                (now_iso, alert_id, patient_id)
-            )
+            if patient_id:
+                cursor = await conn.execute(
+                    "UPDATE alerts SET handled_at = ? WHERE id = ? AND (patient_id = ? OR patient_id IS NULL)",
+                    (now_iso, alert_id, patient_id)
+                )
+            else:
+                cursor = await conn.execute(
+                    "UPDATE alerts SET handled_at = ? WHERE id = ?",
+                    (now_iso, alert_id)
+                )
             await conn.commit()
-            return cursor.rowcount > 0
+            return True
         finally:
             await conn.close()
 

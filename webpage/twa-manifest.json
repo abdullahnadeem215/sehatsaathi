@@ -1,0 +1,18 @@
+{
+  "packageId": "com.jexron.sehatsaathi",
+  "host": "SEHAT_SAATHI_HOST",
+  "name": "Sehat Saathi",
+  "launcherName": "Sehat Saathi",
+  "display": "standalone",
+  "themeColor": "#173b21",
+  "navigationColor": "#173b21",
+  "navigationColorDark": "#173b21",
+  "backgroundColor": "#eaf8e7",
+  "startUrl": "/",
+  "iconUrl": "https://SEHAT_SAATHI_HOST/assets/icon.svg",
+  "maskableIconUrl": "https://SEHAT_SAATHI_HOST/assets/icon.svg",
+  "fallbackType": "customtabs",
+  "enableNotifications": true,
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1
+}
