@@ -28,7 +28,7 @@ jobs:
       - name: Install Android SDK tools
         uses: android-actions/setup-android@v3
         with:
-          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+          packages: "platform-tools platforms;android-35 build-tools;34.0.0 build-tools;35.0.0"
 
       - name: Install Bubblewrap
         run: npm install --global @bubblewrap/cli@1.22.0
@@ -43,6 +43,9 @@ jobs:
           test -d "$SDK_PATH"
           test -d "$SDK_PATH/platform-tools"
           test -d "$SDK_PATH/platforms/android-35"
+          test -x "$SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
+          test -e "$SDK_PATH/tools" || ln -s "$SDK_PATH/cmdline-tools/latest" "$SDK_PATH/tools"
+          test -e "$SDK_PATH/bin" || ln -s "$SDK_PATH/cmdline-tools/latest/bin" "$SDK_PATH/bin"
           echo "Using Android SDK at $SDK_PATH"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('twa-manifest.json')); p.host=process.env.SEHAT_SAATHI_HOST; p.iconUrl='https://'+p.host+'/assets/icon.svg'; p.maskableIconUrl=p.iconUrl; fs.writeFileSync('twa-manifest.json', JSON.stringify(p, null, 2)+'\\n')"
           SDK_PATH="$SDK_PATH" node -e "const fs=require('fs'), os=require('os'), path=require('path'); const dir=path.join(os.homedir(), '.bubblewrap'); fs.mkdirSync(dir, {recursive:true}); fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({jdkPath:process.env.JAVA_HOME, androidSdkPath:process.env.SDK_PATH}, null, 2)+'\\n')"
@@ -60,6 +63,7 @@ jobs:
           test -n "$ANDROID_KEY_ALIAS"
           test -n "$BUBBLEWRAP_KEYSTORE_PASSWORD"
           test -n "$BUBBLEWRAP_KEY_PASSWORD"
+          bubblewrap doctor
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
           bubblewrap build --release --signingKeyPath ./release.keystore --signingKeyAlias "$ANDROID_KEY_ALIAS" --skipPwaValidation
 
