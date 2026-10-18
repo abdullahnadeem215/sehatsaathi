@@ -16,10 +16,10 @@ jobs:
 
       - name: Validate deployment configuration
         env:
-          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
+          SEHAT_SAATHI_APP_HOST: ${{ vars.SEHAT_SAATHI_APP_HOST }}
         run: |
-          test -n "$SEHAT_SAATHI_HOST"
-          echo "APK will target https://$SEHAT_SAATHI_HOST"
+          test -n "$SEHAT_SAATHI_APP_HOST"
+          echo "APK will target https://$SEHAT_SAATHI_APP_HOST"
 
       - name: Install Java and Android build tools
         uses: actions/setup-java@v4
@@ -38,7 +38,7 @@ jobs:
       - name: Generate Bubblewrap configuration
         working-directory: webpage
         env:
-          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
+          SEHAT_SAATHI_APP_HOST: ${{ vars.SEHAT_SAATHI_APP_HOST }}
         run: |
           SDK_PATH="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           test -n "$SDK_PATH"
@@ -49,7 +49,7 @@ jobs:
           test -e "$SDK_PATH/tools" || ln -s "$SDK_PATH/cmdline-tools/latest" "$SDK_PATH/tools"
           test -e "$SDK_PATH/bin" || ln -s "$SDK_PATH/cmdline-tools/latest/bin" "$SDK_PATH/bin"
           echo "Using Android SDK at $SDK_PATH"
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('twa-manifest.json')); p.host=process.env.SEHAT_SAATHI_HOST; p.iconUrl='https://'+p.host+'/assets/icon.svg'; p.maskableIconUrl=p.iconUrl; fs.writeFileSync('twa-manifest.json', JSON.stringify(p, null, 2)+'\\n')"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('twa-manifest.json')); p.host=process.env.SEHAT_SAATHI_APP_HOST; p.iconUrl='https://'+p.host+'/icon.svg'; p.maskableIconUrl=p.iconUrl; fs.writeFileSync('twa-manifest.json', JSON.stringify(p, null, 2)+'\\n')"
           SDK_PATH="$SDK_PATH" node -e "const fs=require('fs'), os=require('os'), path=require('path'); const dir=path.join(os.homedir(), '.bubblewrap'); fs.mkdirSync(dir, {recursive:true}); fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({jdkPath:process.env.JAVA_HOME, androidSdkPath:process.env.SDK_PATH}, null, 2)+'\\n')"
           bubblewrap update --skipVersionUpgrade
 

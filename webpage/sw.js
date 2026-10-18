@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sehat-saathi-showcase-v1'
+const CACHE_NAME = 'sehat-saathi-showcase-v2'
 const APP_SHELL = [
   './',
   './index.html',

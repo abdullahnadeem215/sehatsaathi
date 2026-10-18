@@ -23,8 +23,9 @@ The GitHub Actions workflow at
 with Bubblewrap. Before running it:
 
 1. Deploy the `webpage/` directory over HTTPS.
-2. Add the repository variable `SEHAT_SAATHI_HOST`, containing only the host,
-   for example `sehat-saathi.example.com`.
+2. Add the repository variable `SEHAT_SAATHI_APP_HOST`, containing only the
+   deployed React app host, for example `sehatsaathi-six.vercel.app`. Do not
+   use the showcase webpage host here. The APK opens this React app.
 3. Add the signing secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEY_ALIAS`,
    `BUBBLEWRAP_KEYSTORE_PASSWORD`, and `BUBBLEWRAP_KEY_PASSWORD` according to
    the keystore used by the Android release process.
