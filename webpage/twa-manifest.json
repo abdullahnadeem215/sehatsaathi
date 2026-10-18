@@ -14,6 +14,7 @@
   "fallbackType": "customtabs",
   "enableNotifications": true,
   "splashScreenFadeOutDuration": 300,
+  "minSdkVersion": 24,
   "appVersionName": "1.0.0",
   "appVersionCode": 1
 }
