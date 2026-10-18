@@ -33,7 +33,8 @@ document.addEventListener('keydown', (event) => {
 })
 
 confirmButton.addEventListener('click', () => {
-  const apkUrl = window.SEHAT_SAATHI_APK_URL || '/downloads/Sehat-Saathi.apk'
+  const apkUrl = window.SEHAT_SAATHI_APK_URL ||
+    'https://github.com/abdullahnadeem215/sehatsaathi/releases/latest/download/Sehat-Saathi.apk'
   if (!apkUrl) {
     note.textContent = 'The APK package is not configured for this deployment yet. You can still use the live PWA below.'
     return

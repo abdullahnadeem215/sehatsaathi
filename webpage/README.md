@@ -31,10 +31,14 @@ with Bubblewrap. Before running it:
 4. Run the workflow manually or push a tag matching `webpage-v*`.
 
 The resulting signed APK is uploaded as the `sehat-saathi-android` workflow
-artifact. Configure `window.SEHAT_SAATHI_APK_URL` in the deployed page to the
-published APK URL. If it is not configured, the download confirmation explains
-that the package is not available rather than exposing credentials or
-pretending to download a file.
+artifact. When the workflow runs from a `webpage-v*` tag, it also creates a
+GitHub Release containing `Sehat-Saathi.apk`. The webpage uses the stable URL
+below by default, so it continues to work when a newer release is published:
+
+`https://github.com/abdullahnadeem215/sehatsaathi/releases/latest/download/Sehat-Saathi.apk`
+
+You can override that URL by defining `window.SEHAT_SAATHI_APK_URL` before
+`app.js` loads.
 
 AMD API keys, model endpoints, and operator tokens must remain in the backend
 environment. They are never copied into this public webpage or APK metadata.
