@@ -1,5 +1,9 @@
 .pytest_cache
 .venv
 .env
-.env.example
 node_modules
+__pycache__/
+*.py[cod]
+*.db
+*.db-wal
+*.db-shm
