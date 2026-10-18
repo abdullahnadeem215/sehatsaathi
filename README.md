@@ -7,7 +7,7 @@ Conforms strictly to:
 - **Software Requirements Specification (SRS v1.1 - English-only Edition)**
 - **System Architecture & UML Design Document v1.0**
 
-----
+---
 
 ## 🌟 Key Capabilities & Requirements Addressed
 
