@@ -17,7 +17,9 @@ jobs:
       - name: Validate deployment configuration
         env:
           SEHAT_SAATHI_APP_HOST: ${{ vars.SEHAT_SAATHI_APP_HOST }}
+          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
         run: |
+          SEHAT_SAATHI_APP_HOST="${SEHAT_SAATHI_APP_HOST:-$SEHAT_SAATHI_HOST}"
           test -n "$SEHAT_SAATHI_APP_HOST"
           echo "APK will target https://$SEHAT_SAATHI_APP_HOST"
 
@@ -39,7 +41,11 @@ jobs:
         working-directory: webpage
         env:
           SEHAT_SAATHI_APP_HOST: ${{ vars.SEHAT_SAATHI_APP_HOST }}
+          SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
         run: |
+          SEHAT_SAATHI_APP_HOST="${SEHAT_SAATHI_APP_HOST:-$SEHAT_SAATHI_HOST}"
+          export SEHAT_SAATHI_APP_HOST
+          test -n "$SEHAT_SAATHI_APP_HOST"
           SDK_PATH="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           test -n "$SDK_PATH"
           test -d "$SDK_PATH"
