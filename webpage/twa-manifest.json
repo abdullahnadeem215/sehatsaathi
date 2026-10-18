@@ -13,6 +13,7 @@
   "maskableIconUrl": "https://SEHAT_SAATHI_HOST/assets/icon.svg",
   "fallbackType": "customtabs",
   "enableNotifications": true,
+  "splashScreenFadeOutDuration": 300,
   "appVersionName": "1.0.0",
   "appVersionCode": 1
 }
