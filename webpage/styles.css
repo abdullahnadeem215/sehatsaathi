@@ -3,3 +3,27 @@
  .screenshots-section{padding:0 0 125px}.screenshot-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:17px;align-items:start}.screenshot-card{margin:0;padding:14px;border:1px solid var(--line);border-radius:22px;background:#fff;box-shadow:0 16px 30px rgba(23,59,33,.07)}.screenshot-card:nth-child(2){background:var(--lime);border-color:#9bcf72}.screenshot-frame{display:flex;justify-content:center;align-items:flex-start;min-height:420px;padding:14px 0 0;border-radius:15px;background:var(--mint);overflow:hidden}.screenshot-card img{display:block;width:min(100%,245px);height:auto;border:4px solid var(--forest);border-bottom:0;border-radius:25px 25px 0 0;box-shadow:0 12px 24px rgba(23,59,33,.16)}.screenshot-card figcaption{display:flex;gap:12px;padding:18px 5px 4px;align-items:flex-start}.screenshot-card figcaption>span{font-size:.68rem;font-weight:900;color:var(--green)}.screenshot-card figcaption b,.screenshot-card figcaption small{display:block}.screenshot-card figcaption b{font-size:.92rem}.screenshot-card figcaption small{margin-top:3px;color:var(--muted);font-size:.72rem}.screenshot-home .screenshot-frame{background:#eaf8e7}.screenshot-caregiver .screenshot-frame{background:#dff3dc}
 @media(max-width:850px){.desktop-nav{display:none}.hero{grid-template-columns:1fr;padding-top:50px}.hero-visual{height:540px}.note-one{right:2%}.note-two{left:2%}.intro-section,.audience-section,.screenshots-section{padding:80px 0}.section-heading,.audience-heading{display:block}.feature-grid,.live-layout,.screenshot-grid{grid-template-columns:1fr}.screenshot-card{max-width:430px;margin:0 auto;width:100%}.screenshot-frame{min-height:0}.screenshot-card img{width:min(100%,270px)}.live-copy{margin-bottom:10px}.live-device{height:560px}.download-section{display:block;padding:40px 28px}.download-section .primary-button{margin-top:24px}.strip-tag{display:none}.site-footer{flex-direction:column;gap:8px}}
 @media(max-width:520px){.section-shell{width:min(100% - 30px,1180px)}.site-header{padding:0 15px}.site-header .outline-button{display:none}.hero h1{font-size:3.3rem}.hero-lede{font-size:.95rem}.hero-actions{align-items:stretch;flex-direction:column;gap:15px}.trust-row{margin-top:30px;gap:9px;flex-direction:column}.hero-visual{transform:scale(.87);margin:-25px -25px}.amd-inner{gap:10px;flex-wrap:wrap;padding:13px 0}.amd-inner .strip-divider{display:none}.amd-inner>span:nth-child(2){font-size:.65rem}.feature-grid{gap:12px}.feature-card{min-height:250px}.section-heading h2,.audience-heading h2{margin-top:5px}.live-device{height:520px}.download-section h2{font-size:2.3rem}.site-footer{padding-bottom:25px}.modal-actions{align-items:stretch;flex-direction:column}}
+
+/* Download-page polish and the canonical PWA identity */
+.brand-mark{padding:5px;overflow:hidden;background:var(--green);box-shadow:0 5px 12px rgba(37,113,61,.2)}
+.brand-mark img{display:block;width:100%;height:100%;border-radius:7px}
+.download-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:22px;color:var(--muted);font-size:.72rem}
+.platform-badge{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;background:#fff;padding:6px 10px;color:var(--forest);font-weight:800}
+.platform-badge:first-child{background:var(--lime);border-color:#a4d477}
+.hero-actions .primary-button{min-height:50px;padding-inline:22px}
+.hero-actions .text-link{display:inline-flex;align-items:center;gap:8px}
+.hero-visual:after{content:"SEHAT SAATHI";position:absolute;right:-30px;bottom:7px;color:#bad5b7;font-size:.63rem;font-weight:900;letter-spacing:.2em;writing-mode:vertical-rl}
+.amd-strip{box-shadow:0 10px 25px rgba(23,59,33,.08)}
+.feature-card,.screenshot-card{transition:transform .2s ease,box-shadow .2s ease}
+.feature-card:hover,.screenshot-card:hover{transform:translateY(-5px);box-shadow:0 22px 38px rgba(23,59,33,.12)}
+.feature-card.featured{box-shadow:inset 0 -5px 0 rgba(23,59,33,.08)}
+.feature-card .feature-symbol{width:48px;height:48px;display:grid;place-items:center;border-radius:15px;background:rgba(255,255,255,.55);color:var(--green)}
+.live-device{box-shadow:0 25px 55px rgba(23,59,33,.18)}
+.device-bar span:nth-child(2){font-weight:800;letter-spacing:.03em}
+.download-section{position:relative;overflow:hidden;box-shadow:0 20px 45px rgba(23,59,33,.16)}
+.download-section:after{content:"";position:absolute;width:240px;height:240px;right:-70px;top:-110px;border:1px solid rgba(184,232,135,.25);border-radius:50%;box-shadow:0 0 0 30px rgba(184,232,135,.05),0 0 0 60px rgba(184,232,135,.04)}
+.download-section>*{position:relative;z-index:1}
+.footer-maker{display:inline-flex;align-items:center;gap:5px}.footer-maker small{color:var(--green);font-size:.65rem;border-left:1px solid var(--line);padding-left:8px}
+.download-modal{border:1px solid var(--line)}
+.modal-icon{background:var(--green);color:#fff}
+@media(max-width:850px){.hero-visual:after{right:5px}.download-meta{margin-top:16px}.footer-maker{align-items:flex-start;flex-direction:column}.footer-maker small{border-left:0;padding-left:0}}
