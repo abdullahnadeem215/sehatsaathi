@@ -1,5 +1,5 @@
 """Doctor Directory & Email Consultation API Endpoints.
-Allows patients/caregivers to manage doctor information and personal Gmail,
+it allows patients/caregivers to manage doctor information and personal Gmail,
 draft concise clinical update emails for health issues, and explicitly approve
 sending them.
 """
