@@ -33,7 +33,7 @@ class OpenRouterLLMProvider(LLMProvider):
             raise ProviderError("OPENROUTER_API_KEY not configured. Please add your key from https://openrouter.ai/keys to .env")
 
         start = time.perf_counter()
-        url = "https://openrouter.ai/api/v1/chat/completions"
+        url = f"{settings.OPENROUTER_API_BASE_URL.rstrip('/')}/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",

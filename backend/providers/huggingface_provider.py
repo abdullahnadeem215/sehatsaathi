@@ -33,7 +33,7 @@ class HFLLMProvider(LLMProvider):
         conversation_history: Optional[str] = None
     ) -> LLMResult:
         start = time.perf_counter()
-        url = f"https://router.huggingface.co/hf-inference/models/{self.model}"
+        url = f"{settings.HF_API_BASE_URL.rstrip('/')}/{self.model}"
         headers = {
             "Authorization": f"Bearer {self.token}" if self.token else "",
             "Content-Type": "application/json"
@@ -117,7 +117,7 @@ class HFSTTProvider(STTProvider):
 
     async def transcribe(self, audio_bytes: bytes, language: str = "en") -> STTResult:
         start = time.perf_counter()
-        url = f"https://router.huggingface.co/hf-inference/models/{self.model}"
+        url = f"{settings.HF_API_BASE_URL.rstrip('/')}/{self.model}"
         headers = {
             "Authorization": f"Bearer {self.token}" if self.token else "",
             "Content-Type": "audio/wav"
@@ -170,7 +170,7 @@ class HFTTSProvider(TTSProvider):
 
     async def synthesize(self, text: str, script: str = "en") -> TTSResult:
         start = time.perf_counter()
-        url = f"https://router.huggingface.co/hf-inference/models/{self.model}"
+        url = f"{settings.HF_API_BASE_URL.rstrip('/')}/{self.model}"
         headers = {
             "Authorization": f"Bearer {self.token}" if self.token else "",
             "Content-Type": "application/json"

@@ -176,7 +176,11 @@ class OCRService:
                     "temperature": 0.1
                 }
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+                    resp = await client.post(
+                        f"{settings.GROQ_API_BASE_URL.rstrip('/')}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
                     if resp.status_code == 200:
                         content = resp.json()["choices"][0]["message"]["content"]
                         json_match = re.search(r"\{.*\}", content, re.DOTALL)
@@ -205,7 +209,11 @@ class OCRService:
                     "temperature": 0.1
                 }
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+                    resp = await client.post(
+                        f"{settings.OPENROUTER_API_BASE_URL.rstrip('/')}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
                     if resp.status_code == 200:
                         content = resp.json()["choices"][0]["message"]["content"]
                         json_match = re.search(r"\{.*\}", content, re.DOTALL)

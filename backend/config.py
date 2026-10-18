@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     PROVIDER_TIMEOUT_SECONDS: float = Field(default=12.0, description="Timeout for provider calls in seconds")
 
     # AMD Developer Cloud (vLLM, OpenAI-compatible)
-    AMD_LLM_BASE_URL: Optional[str] = Field(default="https://amd-vllm-endpoint.example.com/v1")
-    AMD_LLM_API_KEY: Optional[str] = Field(default="mock-amd-key")
+    AMD_LLM_BASE_URL: Optional[str] = Field(default=None)
+    AMD_LLM_API_KEY: Optional[str] = Field(default=None)
     AMD_LLM_MODEL: str = Field(default="meta-llama/Llama-3-8B-Instruct")
     AMD_STT_URL: Optional[str] = Field(default=None)
     AMD_STT_MODEL: str = Field(default="openai/whisper-large-v3")
@@ -35,23 +35,26 @@ class Settings(BaseSettings):
     AMD_TTS_MODEL: str = Field(default="urdu-tts-model")
 
     # Hugging Face
-    HF_TOKEN: Optional[str] = Field(default="REDACTED_HF_TOKEN")
+    HF_TOKEN: Optional[str] = Field(default=None)
+    HF_API_BASE_URL: str = Field(default="https://router.huggingface.co/hf-inference/models")
     HF_LLM_MODEL: str = Field(default="meta-llama/Meta-Llama-3-8B-Instruct")
     HF_STT_MODEL: str = Field(default="openai/whisper-large-v3")
     HF_TTS_MODEL: str = Field(default="facebook/mms-tts-urd-script_arabic")
 
     # Groq Cloud (Free high-speed LPU inference & Whisper STT: https://console.groq.com/keys)
-    GROQ_API_KEY: Optional[str] = Field(default="REDACTED_GROQ_API_KEY")
+    GROQ_API_KEY: Optional[str] = Field(default=None)
+    GROQ_API_BASE_URL: str = Field(default="https://api.groq.com/openai/v1")
     GROQ_LLM_MODEL: str = Field(default="openai/gpt-oss-120b")
     GROQ_STT_MODEL: str = Field(default="whisper-large-v3")
 
     # OpenRouter (Free tier models: https://openrouter.ai/keys)
-    OPENROUTER_API_KEY: Optional[str] = Field(default="REDACTED_OPENROUTER_API_KEY")
+    OPENROUTER_API_KEY: Optional[str] = Field(default=None)
+    OPENROUTER_API_BASE_URL: str = Field(default="https://openrouter.ai/api/v1")
     OPENROUTER_LLM_MODEL: str = Field(default="meta-llama/llama-3.1-8b-instruct:free")
 
     # Safety & Operations
     CONFIDENCE_THRESHOLD: float = Field(default=0.6, description="Grounding confidence threshold")
-    OPERATOR_TOKEN: str = Field(default="REDACTED_OPERATOR_TOKEN", description="Protected token for operator health check")
+    OPERATOR_TOKEN: Optional[str] = Field(default=None, description="Protected token for operator health check")
 
     # Caregiver Pairing (SRS v1.1 FR-20 to FR-25)
     PAIRING_KEY_TTL_SECONDS: int = Field(default=600, description="10-minute lifetime for pairing keys")

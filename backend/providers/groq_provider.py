@@ -35,7 +35,7 @@ class GroqLLMProvider(LLMProvider):
             raise ProviderError("GROQ_API_KEY not configured. Please add your free key from https://console.groq.com/keys to .env")
 
         start = time.perf_counter()
-        url = "https://api.groq.com/openai/v1/chat/completions"
+        url = f"{settings.GROQ_API_BASE_URL.rstrip('/')}/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
@@ -146,7 +146,7 @@ class GroqSTTProvider(STTProvider):
             raise ProviderError("GROQ_API_KEY not configured. Please add your free key to .env")
 
         start = time.perf_counter()
-        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        url = f"{settings.GROQ_API_BASE_URL.rstrip('/')}/audio/transcriptions"
         headers = {
             "Authorization": f"Bearer {self.api_key}"
         }
