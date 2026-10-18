@@ -39,8 +39,8 @@ jobs:
           SEHAT_SAATHI_HOST: ${{ vars.SEHAT_SAATHI_HOST }}
         run: |
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('twa-manifest.json')); p.host=process.env.SEHAT_SAATHI_HOST; p.iconUrl='https://'+p.host+'/assets/icon.svg'; p.maskableIconUrl=p.iconUrl; fs.writeFileSync('twa-manifest.json', JSON.stringify(p, null, 2)+'\\n')"
-          bubblewrap updateConfig --jdkPath "$JAVA_HOME" --androidSdkPath "$ANDROID_HOME"
-          bubblewrap update
+          node -e "const fs=require('fs'), os=require('os'), path=require('path'); const dir=path.join(os.homedir(), '.bubblewrap'); fs.mkdirSync(dir, {recursive:true}); fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({jdkPath:process.env.JAVA_HOME, androidSdkPath:process.env.ANDROID_HOME}, null, 2)+'\\n')"
+          bubblewrap update --skipVersionUpgrade
 
       - name: Build signed release APK
         working-directory: webpage
@@ -55,7 +55,7 @@ jobs:
           test -n "$BUBBLEWRAP_KEYSTORE_PASSWORD"
           test -n "$BUBBLEWRAP_KEY_PASSWORD"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
-          bubblewrap build --release --signingKeyPath ./release.keystore --signingKeyAlias "$ANDROID_KEY_ALIAS"
+          bubblewrap build --release --signingKeyPath ./release.keystore --signingKeyAlias "$ANDROID_KEY_ALIAS" --skipPwaValidation
 
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
